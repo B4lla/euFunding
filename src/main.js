@@ -232,19 +232,19 @@ function applyLanguage() {
   renderRows();
 }
 
-async function fetchWithTimeout(url) {
+async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { ...options, signal: controller.signal });
     return res;
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-async function loadSnapshot() {
+async function loadSnapshot(forceRefresh = false) {
   refs.statusText.textContent = t("statusLoading");
 
   const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
@@ -255,7 +255,8 @@ async function loadSnapshot() {
     let responseSource = "";
 
     for (const endpoint of endpoints) {
-      const res = await fetchWithTimeout(`${endpoint}?t=${Date.now()}`);
+      const url = forceRefresh ? `${endpoint}?refresh=1` : endpoint;
+      const res = await fetchWithTimeout(url, forceRefresh ? { cache: "no-store" } : {});
       if (!res.ok) continue;
       const data = await res.json();
       if (data && Array.isArray(data.items)) {
@@ -354,7 +355,7 @@ refs.searchInput.addEventListener("input", () => {
   }, 120);
 });
 
-refs.refreshBtn.addEventListener("click", loadSnapshot);
+refs.refreshBtn.addEventListener("click", () => loadSnapshot(true));
 refs.exportCsvBtn.addEventListener("click", exportCsv);
 refs.exportXlsxBtn.addEventListener("click", exportXlsx);
 refs.prevPageBtn.addEventListener("click", () => {

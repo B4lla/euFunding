@@ -4,38 +4,28 @@ const path = require("path");
 const CONFIG = {
   SEARCH_URL: "https://api.tech.ec.europa.eu/search-api/prod/rest/search",
   API_KEY: "SEDIA",
-  PAGE_SIZE: 60,
-  MAX_PAGES_PER_KEYWORD: 4,
-  MAX_API_CALLS: 24,
+  PAGE_SIZE: 50,
+  MAX_PAGES_PER_KEYWORD: 1,
+  MAX_API_CALLS: 6,
   MAX_ROWS: 500,
   CACHE_TTL_MS: 12 * 60 * 60 * 1000,
-  REQUEST_TIMEOUT_MS: 10_000,
+  REQUEST_TIMEOUT_MS: 3_000,
+  GLOBAL_RUNTIME_BUDGET_MS: 11_000,
   RATE_LIMIT_PER_HOUR: 600,
   MAX_TITLE_CHARS: 220,
   MAX_DESC_CHARS: 1200,
 };
 
 const KEYWORDS = [
-  "2027",
   "2026",
-  "2025",
-  "HORIZON-2027",
   "HORIZON-2026",
-  "LIFE-2027",
   "LIFE-2026",
-  "DIGITAL-2027",
   "DIGITAL-2026",
-  "CEF-2027",
   "CEF-2026",
-  "ERC-2027",
   "ERC-2026",
-  "MSCA-2027",
   "MSCA-2026",
-  "EIC-2027",
   "EIC-2026",
-  "call for proposals 2027",
   "call for proposals 2026",
-  "tender 2027",
   "tender 2026",
 ];
 
@@ -194,14 +184,23 @@ async function fetchLiveData() {
   const allRows = [];
   const seen = new Set();
   let apiCalls = 0;
+  const startedAt = Date.now();
 
   for (const keyword of KEYWORDS) {
     for (let page = 1; page <= CONFIG.MAX_PAGES_PER_KEYWORD; page += 1) {
+      const elapsed = Date.now() - startedAt;
+      const remainingBudget = CONFIG.GLOBAL_RUNTIME_BUDGET_MS - elapsed;
+
+      if (remainingBudget <= 700) {
+        break;
+      }
+
       if (apiCalls >= CONFIG.MAX_API_CALLS || allRows.length >= CONFIG.MAX_ROWS) {
         break;
       }
 
-      const items = await fetchPage(keyword, page);
+      const perCallTimeout = Math.min(CONFIG.REQUEST_TIMEOUT_MS, Math.max(700, remainingBudget - 500));
+      const items = await fetchPage(keyword, page, perCallTimeout);
       apiCalls += 1;
       if (!items || items.length === 0) break;
 
@@ -247,7 +246,7 @@ async function fetchLiveData() {
   };
 }
 
-async function fetchPage(keyword, pageNumber) {
+async function fetchPage(keyword, pageNumber, timeoutMs) {
   const params = new URLSearchParams({
     apiKey: CONFIG.API_KEY,
     text: keyword,
@@ -259,7 +258,7 @@ async function fetchPage(keyword, pageNumber) {
   const response = await fetchWithTimeout(url, {
     method: "POST",
     body: "",
-  });
+  }, timeoutMs);
 
   if (!response || !response.ok) return [];
 
@@ -273,9 +272,9 @@ async function fetchPage(keyword, pageNumber) {
   }
 }
 
-async function fetchWithTimeout(url, options) {
+async function fetchWithTimeout(url, options, timeoutMs = CONFIG.REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
       ...options,
