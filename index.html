@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EU Calls Dashboard</title>
+    <meta name="description" content="EU calls dashboard 2021-2027 with CSV/Excel export" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="labelPeriod">Funding period 2021-2027</p>
+          <h1 id="title">EU Calls for Proposals Dashboard</h1>
+        </div>
+
+        <div class="controls-inline">
+          <label for="langSelect" id="labelLanguage">Language</label>
+          <select id="langSelect" aria-label="Language selector">
+            <option value="en">English</option>
+            <option value="ro">Romana</option>
+          </select>
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <input
+          id="searchInput"
+          type="search"
+          placeholder="Search by title, code, programme..."
+          aria-label="Search calls"
+        />
+
+        <button id="refreshBtn" class="btn btn-secondary" type="button">Refresh snapshot</button>
+        <button id="exportCsvBtn" class="btn btn-primary" type="button">Export CSV</button>
+        <button id="exportXlsxBtn" class="btn btn-primary" type="button">Export Excel</button>
+      </section>
+
+      <section class="meta">
+        <p id="statusText">Loading data...</p>
+        <p id="updatedAt"></p>
+      </section>
+
+      <section class="pager" aria-label="Table pagination">
+        <button id="prevPageBtn" class="btn btn-secondary" type="button">Prev</button>
+        <span id="pageInfo">Page 1/1</span>
+        <button id="nextPageBtn" class="btn btn-secondary" type="button">Next</button>
+      </section>
+
+      <section class="table-wrap" aria-live="polite">
+        <table>
+          <thead>
+            <tr id="tableHeadRow"></tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
