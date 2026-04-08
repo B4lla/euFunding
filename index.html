@@ -55,7 +55,37 @@
           <tbody id="tableBody"></tbody>
         </table>
       </section>
+
+      <section class="cards-wrap" aria-live="polite">
+        <div id="cardList" class="cards-list"></div>
+      </section>
     </main>
+
+    <dialog id="descModal" class="desc-modal" aria-labelledby="modalHeading">
+      <article class="modal-shell">
+        <header class="modal-head">
+          <h2 id="modalHeading">Call details</h2>
+          <button id="modalCloseBtn" class="btn btn-secondary" type="button" aria-label="Close">Close</button>
+        </header>
+
+        <section class="modal-meta" aria-label="Call metadata">
+          <p><strong id="modalTopicCodeLabel">Topic code</strong><span id="modalTopicCodeValue">N/A</span></p>
+          <p><strong id="modalTopicTitleLabel">Topic title</strong><span id="modalTopicTitleValue">N/A</span></p>
+          <p><strong id="modalDeadlineLabel">Deadline</strong><span id="modalDeadlineValue">N/A</span></p>
+          <p>
+            <strong id="modalCallLinkLabel">Call link</strong>
+            <span>
+              <a id="modalLinkValue" class="call-link" href="#" target="_blank" rel="noopener noreferrer">Open</a>
+            </span>
+          </p>
+        </section>
+
+        <section class="modal-body">
+          <h3 id="modalDescriptionLabel">Topic description</h3>
+          <p id="modalDescriptionValue">N/A</p>
+        </section>
+      </article>
+    </dialog>
 
     <script type="module" src="/src/main.js"></script>
   </body>

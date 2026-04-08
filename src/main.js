@@ -14,8 +14,11 @@ const COLUMN_ORDER = [
   "Indicative number of grants",
   "CAll link",
 ];
+const DESCRIPTION_COLUMN = "Topic description";
+const FULL_DESCRIPTION_FIELD = "Topic description full";
+const DESCRIPTION_PREVIEW_LENGTH = 220;
 
-const CACHE_KEY = "eu-calls-cache-v3";
+const CACHE_KEY = "eu-calls-cache-v4";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const PAGE_SIZE = 50;
 const REQUEST_TIMEOUT_MS = 10000;
@@ -37,8 +40,20 @@ const I18N = {
     statusEmpty: "No calls available for the current filters.",
     statusError: "Could not load data.",
     updatedAt: "Last update: {date}",
+    source: "Source: {source}",
     openLink: "Open",
     pageText: "Page {page}/{total}",
+    pageRowsText: "Showing {count} rows on this page.",
+    prev: "Prev",
+    next: "Next",
+    readMore: "Read more",
+    modalTitle: "Call details",
+    modalClose: "Close",
+    modalTopicCode: "Topic code",
+    modalTopicTitle: "Topic title",
+    modalDeadline: "Deadline",
+    modalCallLink: "Call link",
+    modalDescription: "Topic description",
   },
   ro: {
     title: "Tablou apeluri UE - propuneri",
@@ -53,8 +68,20 @@ const I18N = {
     statusEmpty: "Nu exista apeluri pentru filtrele curente.",
     statusError: "Datele nu au putut fi incarcate.",
     updatedAt: "Ultima actualizare: {date}",
+    source: "Sursa: {source}",
     openLink: "Deschide",
     pageText: "Pagina {page}/{total}",
+    pageRowsText: "Se afiseaza {count} randuri pe aceasta pagina.",
+    prev: "Anterior",
+    next: "Urmator",
+    readMore: "Citeste mai mult",
+    modalTitle: "Detalii apel",
+    modalClose: "Inchide",
+    modalTopicCode: "Cod topic",
+    modalTopicTitle: "Titlu topic",
+    modalDeadline: "Termen limita",
+    modalCallLink: "Link apel",
+    modalDescription: "Descriere topic",
   },
 };
 
@@ -65,6 +92,7 @@ const state = {
   generatedAt: "",
   source: "",
   page: 1,
+  activeDescriptionRow: null,
 };
 
 const refs = {
@@ -78,11 +106,25 @@ const refs = {
   exportXlsxBtn: document.getElementById("exportXlsxBtn"),
   tableHeadRow: document.getElementById("tableHeadRow"),
   tableBody: document.getElementById("tableBody"),
+  cardList: document.getElementById("cardList"),
   statusText: document.getElementById("statusText"),
   updatedAt: document.getElementById("updatedAt"),
   prevPageBtn: document.getElementById("prevPageBtn"),
   nextPageBtn: document.getElementById("nextPageBtn"),
   pageInfo: document.getElementById("pageInfo"),
+  descModal: document.getElementById("descModal"),
+  modalHeading: document.getElementById("modalHeading"),
+  modalCloseBtn: document.getElementById("modalCloseBtn"),
+  modalTopicCodeLabel: document.getElementById("modalTopicCodeLabel"),
+  modalTopicCodeValue: document.getElementById("modalTopicCodeValue"),
+  modalTopicTitleLabel: document.getElementById("modalTopicTitleLabel"),
+  modalTopicTitleValue: document.getElementById("modalTopicTitleValue"),
+  modalDeadlineLabel: document.getElementById("modalDeadlineLabel"),
+  modalDeadlineValue: document.getElementById("modalDeadlineValue"),
+  modalCallLinkLabel: document.getElementById("modalCallLinkLabel"),
+  modalLinkValue: document.getElementById("modalLinkValue"),
+  modalDescriptionLabel: document.getElementById("modalDescriptionLabel"),
+  modalDescriptionValue: document.getElementById("modalDescriptionValue"),
 };
 
 function t(key, vars = {}) {
@@ -93,6 +135,15 @@ function t(key, vars = {}) {
 function sanitize(value) {
   if (value === null || value === undefined || value === "") return "N/A";
   return String(value);
+}
+
+function normalizeClientRow(row) {
+  const normalized = row && typeof row === "object" ? { ...row } : {};
+  normalized[DESCRIPTION_COLUMN] = sanitize(normalized[DESCRIPTION_COLUMN]);
+  if (!String(normalized[FULL_DESCRIPTION_FIELD] || "").trim()) {
+    normalized[FULL_DESCRIPTION_FIELD] = normalized[DESCRIPTION_COLUMN];
+  }
+  return normalized;
 }
 
 function safeParseJSON(raw) {
@@ -127,20 +178,55 @@ function updateMetaText() {
     : "";
 
   if (state.source) {
-    refs.updatedAt.textContent = refs.updatedAt.textContent
-      ? `${refs.updatedAt.textContent} | Source: ${state.source}`
-      : `Source: ${state.source}`;
+    const sourceText = t("source", { source: state.source });
+    refs.updatedAt.textContent = refs.updatedAt.textContent ? `${refs.updatedAt.textContent} | ${sourceText}` : sourceText;
   }
 }
 
 function applyPayload(payload, responseSource = "") {
-  state.rows = Array.isArray(payload.items) ? payload.items : [];
+  state.rows = Array.isArray(payload.items) ? payload.items.map(normalizeClientRow) : [];
   state.generatedAt = payload.generatedAt || "";
   state.source = payload.source || responseSource || "";
   state.page = 1;
 
   updateMetaText();
   renderRows();
+}
+
+function getFullDescription(row) {
+  return sanitize(row[FULL_DESCRIPTION_FIELD] || row[DESCRIPTION_COLUMN]);
+}
+
+function getDescriptionPreview(row) {
+  const full = getFullDescription(row);
+  if (full === "N/A" || full.length <= DESCRIPTION_PREVIEW_LENGTH) return full;
+  return `${full.slice(0, DESCRIPTION_PREVIEW_LENGTH - 3).trimEnd()}...`;
+}
+
+function hasExpandedDescription(row) {
+  const full = getFullDescription(row);
+  return full !== "N/A" && full.length > DESCRIPTION_PREVIEW_LENGTH;
+}
+
+function createDescriptionCell(row) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "desc-cell";
+
+  const preview = document.createElement("p");
+  preview.className = "desc-preview";
+  preview.textContent = getDescriptionPreview(row);
+  wrapper.appendChild(preview);
+
+  if (hasExpandedDescription(row)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "desc-more-btn";
+    button.textContent = t("readMore");
+    button.addEventListener("click", () => openDescriptionModal(row));
+    wrapper.appendChild(button);
+  }
+
+  return wrapper;
 }
 
 function getFilteredRows() {
@@ -171,12 +257,83 @@ function updatePager(totalPages) {
   refs.nextPageBtn.disabled = state.page >= totalPages;
 }
 
+function appendCardField(card, label, value, isLink = false) {
+  const line = document.createElement("p");
+  line.className = "card-field";
+
+  const strong = document.createElement("strong");
+  strong.textContent = `${label}: `;
+  line.appendChild(strong);
+
+  if (isLink && value && value !== "N/A") {
+    const a = document.createElement("a");
+    a.href = value;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.className = "call-link";
+    a.textContent = t("openLink");
+    line.appendChild(a);
+  } else {
+    const span = document.createElement("span");
+    span.textContent = sanitize(value);
+    line.appendChild(span);
+  }
+
+  card.appendChild(line);
+}
+
+function renderCards(pageRows) {
+  if (!refs.cardList) return;
+  refs.cardList.innerHTML = "";
+
+  const fragment = document.createDocumentFragment();
+
+  for (const row of pageRows) {
+    const card = document.createElement("article");
+    card.className = "call-card";
+
+    const title = document.createElement("h3");
+    title.className = "card-title";
+    title.textContent = sanitize(row["Topic title"]);
+    card.appendChild(title);
+
+    appendCardField(card, t("modalTopicCode"), row["Topic code"]);
+    appendCardField(card, "Programme", row["Programme"]);
+    appendCardField(card, t("modalDeadline"), row["Deadline"]);
+    appendCardField(card, "Budget 2026", row["Budget (EUR) - Year : 2026"]);
+
+    const descriptionWrap = document.createElement("div");
+    descriptionWrap.className = "card-description";
+
+    const description = document.createElement("p");
+    description.textContent = getDescriptionPreview(row);
+    descriptionWrap.appendChild(description);
+
+    if (hasExpandedDescription(row)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "desc-more-btn";
+      button.textContent = t("readMore");
+      button.addEventListener("click", () => openDescriptionModal(row));
+      descriptionWrap.appendChild(button);
+    }
+
+    card.appendChild(descriptionWrap);
+    appendCardField(card, t("modalCallLink"), row["CAll link"], true);
+
+    fragment.appendChild(card);
+  }
+
+  refs.cardList.appendChild(fragment);
+}
+
 function renderRows() {
   const rows = getFilteredRows();
   const { totalPages, pageRows } = getVisibleRows(rows);
 
   state.filteredRows = rows;
   refs.tableBody.innerHTML = "";
+  if (refs.cardList) refs.cardList.innerHTML = "";
   updatePager(totalPages);
 
   if (rows.length === 0) {
@@ -184,7 +341,7 @@ function renderRows() {
     return;
   }
 
-  refs.statusText.textContent = `${t("statusLoaded", { count: rows.length })} Showing ${pageRows.length} rows on this page.`;
+  refs.statusText.textContent = `${t("statusLoaded", { count: rows.length })} ${t("pageRowsText", { count: pageRows.length })}`;
 
   const fragment = document.createDocumentFragment();
 
@@ -201,6 +358,8 @@ function renderRows() {
         a.className = "call-link";
         a.textContent = t("openLink");
         td.appendChild(a);
+      } else if (col === DESCRIPTION_COLUMN) {
+        td.appendChild(createDescriptionCell(row));
       } else {
         td.textContent = sanitize(row[col]);
       }
@@ -211,6 +370,7 @@ function renderRows() {
   }
 
   refs.tableBody.appendChild(fragment);
+  renderCards(pageRows);
 }
 
 function applyLanguage() {
@@ -221,6 +381,17 @@ function applyLanguage() {
   refs.refreshBtn.textContent = t("refresh");
   refs.exportCsvBtn.textContent = t("exportCsv");
   refs.exportXlsxBtn.textContent = t("exportXlsx");
+  refs.prevPageBtn.textContent = t("prev");
+  refs.nextPageBtn.textContent = t("next");
+
+  if (refs.modalHeading) refs.modalHeading.textContent = t("modalTitle");
+  if (refs.modalCloseBtn) refs.modalCloseBtn.textContent = t("modalClose");
+  if (refs.modalTopicCodeLabel) refs.modalTopicCodeLabel.textContent = t("modalTopicCode");
+  if (refs.modalTopicTitleLabel) refs.modalTopicTitleLabel.textContent = t("modalTopicTitle");
+  if (refs.modalDeadlineLabel) refs.modalDeadlineLabel.textContent = t("modalDeadline");
+  if (refs.modalCallLinkLabel) refs.modalCallLinkLabel.textContent = t("modalCallLink");
+  if (refs.modalDescriptionLabel) refs.modalDescriptionLabel.textContent = t("modalDescription");
+  if (refs.modalLinkValue) refs.modalLinkValue.textContent = t("openLink");
 
   refs.tableHeadRow.innerHTML = "";
   for (const col of COLUMN_ORDER) {
@@ -230,6 +401,71 @@ function applyLanguage() {
   }
 
   renderRows();
+}
+
+function openDescriptionModal(row) {
+  if (!refs.descModal) return;
+
+  state.activeDescriptionRow = row;
+  if (refs.modalTopicCodeValue) refs.modalTopicCodeValue.textContent = sanitize(row["Topic code"]);
+  if (refs.modalTopicTitleValue) refs.modalTopicTitleValue.textContent = sanitize(row["Topic title"]);
+  if (refs.modalDeadlineValue) refs.modalDeadlineValue.textContent = sanitize(row["Deadline"]);
+  if (refs.modalDescriptionValue) refs.modalDescriptionValue.textContent = getFullDescription(row);
+
+  if (refs.modalLinkValue) {
+    const link = sanitize(row["CAll link"]);
+    if (link !== "N/A") {
+      refs.modalLinkValue.href = link;
+      refs.modalLinkValue.hidden = false;
+      refs.modalLinkValue.textContent = t("openLink");
+    } else {
+      refs.modalLinkValue.hidden = true;
+    }
+  }
+
+  if (typeof refs.descModal.showModal === "function") {
+    refs.descModal.showModal();
+  } else {
+    refs.descModal.setAttribute("open", "true");
+  }
+
+  const modalBody = refs.descModal.querySelector(".modal-body");
+  if (modalBody) modalBody.scrollTop = 0;
+}
+
+function closeDescriptionModal() {
+  if (!refs.descModal) return;
+  if (typeof refs.descModal.close === "function") {
+    refs.descModal.close();
+  } else {
+    refs.descModal.removeAttribute("open");
+  }
+  state.activeDescriptionRow = null;
+}
+
+function isModalOpen() {
+  if (!refs.descModal) return false;
+  return refs.descModal.hasAttribute("open");
+}
+
+function bindModalEvents() {
+  if (!refs.descModal) return;
+
+  if (refs.modalCloseBtn) {
+    refs.modalCloseBtn.addEventListener("click", closeDescriptionModal);
+  }
+
+  refs.descModal.addEventListener("click", (event) => {
+    if (event.target === refs.descModal) {
+      closeDescriptionModal();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isModalOpen()) {
+      closeDescriptionModal();
+    }
+  });
 }
 
 async function fetchWithTimeout(url, options = {}) {
@@ -285,12 +521,17 @@ function csvEscape(value) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
+function getExportValue(row, col) {
+  if (col === DESCRIPTION_COLUMN) return getFullDescription(row);
+  return sanitize(row[col]);
+}
+
 function exportCsv() {
   const rows = state.filteredRows;
   const lines = [COLUMN_ORDER.map(csvEscape).join(",")];
 
   for (const row of rows) {
-    const line = COLUMN_ORDER.map((col) => csvEscape(row[col])).join(",");
+    const line = COLUMN_ORDER.map((col) => csvEscape(getExportValue(row, col))).join(",");
     lines.push(line);
   }
 
@@ -325,7 +566,7 @@ function exportXlsx() {
       const data = state.filteredRows.map((row) => {
         const out = {};
         for (const col of COLUMN_ORDER) {
-          out[col] = sanitize(row[col]);
+          out[col] = getExportValue(row, col);
         }
         return out;
       });
@@ -374,6 +615,7 @@ refs.nextPageBtn.addEventListener("click", () => {
   }
 
   applyLanguage();
+  bindModalEvents();
 
   const localPayload = loadLocalCache();
   if (localPayload && Array.isArray(localPayload.items)) {

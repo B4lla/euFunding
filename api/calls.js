@@ -240,8 +240,8 @@ function normalizeItem(item) {
 
   if (!isAvailable(action.status, deadlineIso)) return null;
 
-  const budgetOverview = parseMaybeJson(pickMeta(md, "budgetOverview"));
-  const budget = normalizeMoneyValue(findValueWithYear2026(budgetOverview));
+  const fullDescription = firstNonEmpty(stripHtml(pickMeta(md, "descriptionByte")), stripHtml(item.summary), stripHtml(item.content), "N/A");
+  const budget = extractBudget2026(md, fullDescription);
 
   const programmeRaw = firstNonEmpty(stripHtml(pickMeta(md, "frameworkProgramme")), stripHtml(pickMeta(md, "programme")));
   const actionRaw = firstNonEmpty(stripHtml(pickMeta(md, "typesOfAction")), stripHtml(pickMeta(md, "type")));
@@ -251,7 +251,8 @@ function normalizeItem(item) {
     "Type of Action": nonEmptyOrNA(mapActionType(actionRaw)),
     "Topic code": nonEmptyOrNA(topicCode),
     "Topic title": nonEmptyOrNA(truncate(firstNonEmpty(stripHtml(pickMeta(md, "title")), stripHtml(item.title), stripHtml(item.summary), topicCode), 220)),
-    "Topic description": nonEmptyOrNA(truncate(firstNonEmpty(stripHtml(pickMeta(md, "descriptionByte")), stripHtml(item.summary), stripHtml(item.content), "N/A"), 1200)),
+    "Topic description": nonEmptyOrNA(truncate(fullDescription, 1200)),
+    "Topic description full": nonEmptyOrNA(truncate(fullDescription, 12000)),
     "Budget (EUR) - Year : 2026": nonEmptyOrNA(budget),
     Stages: nonEmptyOrNA(stripHtml(pickMeta(md, "stages")) || action.stages),
     "Opening date": nonEmptyOrNA(openingIso),
@@ -338,11 +339,106 @@ function buildCallLink(topicCode, candidateUrl) {
   return `https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/${encodeURIComponent(topicCode)}`;
 }
 
+function extractBudget2026(metadata, fullDescription) {
+  const budgetCandidates = [
+    pickMeta(metadata, "budgetOverview"),
+    pickMeta(metadata, "budget"),
+    pickMeta(metadata, "budgetByYear"),
+    pickMeta(metadata, "budgetInfo"),
+    pickMeta(metadata, "estimatedBudget"),
+    pickMeta(metadata, "indicativeBudget"),
+    pickMeta(metadata, "financialData"),
+  ];
+
+  for (const candidate of budgetCandidates) {
+    const parsed = parseMaybeJson(candidate);
+    const found = findValueWithYear2026(parsed);
+    if (found) return normalizeMoneyValue(found);
+  }
+
+  const textCandidate = [
+    stringifyValue(pickMeta(metadata, "budgetOverview")),
+    stringifyValue(pickMeta(metadata, "budget")),
+    fullDescription,
+  ].join(" ");
+  const fromText = findBudget2026InText(textCandidate);
+  if (fromText) return normalizeMoneyValue(fromText);
+
+  return "N/A";
+}
+
 function normalizeMoneyValue(value) {
   if (value === null || value === undefined || value === "") return "N/A";
   const numeric = Number(String(value).replace(/[^\d.-]/g, ""));
   if (Number.isFinite(numeric) && numeric > 0) return `${numeric.toLocaleString("en-US")} EUR`;
   return String(value);
+}
+
+function parseNumeric(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
+
+  const compact = String(value).replace(/[^\d,.-]/g, "");
+  if (!compact) return null;
+
+  const commaCount = (compact.match(/,/g) || []).length;
+  const dotCount = (compact.match(/\./g) || []).length;
+  let normalized = compact;
+
+  if (commaCount > 0 && dotCount > 0) {
+    normalized = compact.replace(/,/g, "");
+  } else if (commaCount > 1) {
+    normalized = compact.replace(/,/g, "");
+  } else if (commaCount === 1 && dotCount === 0) {
+    normalized = compact.replace(/,/g, "");
+  }
+
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function amountToMoneyString(amount) {
+  const numeric = parseNumeric(amount);
+  if (numeric === null) return null;
+  return `${numeric.toLocaleString("en-US")} EUR`;
+}
+
+function extractAmountFromObject(node) {
+  if (!node || typeof node !== "object") return null;
+
+  const min = parseNumeric(node.min ?? node.minimum ?? node.minAmount ?? node.minContribution ?? node.from);
+  const max = parseNumeric(node.max ?? node.maximum ?? node.maxAmount ?? node.maxContribution ?? node.to);
+  if (min !== null || max !== null) {
+    return formatMoney(min, max);
+  }
+
+  const amountKeys = [
+    "amount",
+    "value",
+    "eur",
+    "total",
+    "budget",
+    "budgetAmount",
+    "indicativeAmount",
+    "estimatedBudget",
+    "plannedAmount",
+  ];
+  for (const key of amountKeys) {
+    const amount = amountToMoneyString(node[key]);
+    if (amount) return amount;
+  }
+
+  return null;
+}
+
+function keyLooksYear2026(key) {
+  return /(^|\D)2026(\D|$)/.test(String(key || ""));
+}
+
+function objectLooksYear2026(node) {
+  if (!node || typeof node !== "object") return false;
+  const markers = [node.year, node.budgetYear, node.fiscalYear, node.callYear, node.annualYear, node.period];
+  return markers.some((v) => keyLooksYear2026(v));
 }
 
 function findValueWithYear2026(node) {
@@ -356,20 +452,55 @@ function findValueWithYear2026(node) {
   }
   if (typeof node !== "object") return null;
 
+  if (objectLooksYear2026(node)) {
+    const ownAmount = extractAmountFromObject(node);
+    if (ownAmount) return ownAmount;
+  }
+
   for (const [key, value] of Object.entries(node)) {
-    if (key.includes("2026")) {
+    if (keyLooksYear2026(key)) {
       if (typeof value === "number") return `${value.toLocaleString("en-US")} EUR`;
-      if (typeof value === "string") return value;
-      if (value && typeof value === "object") {
-        const amount = value.amount ?? value.value ?? value.eur ?? value.total;
-        if (amount !== undefined) return `${Number(amount).toLocaleString("en-US")} EUR`;
+      if (typeof value === "string") {
+        const numeric = amountToMoneyString(value);
+        if (numeric) return numeric;
       }
+      const amount = extractAmountFromObject(value);
+      if (amount) return amount;
     }
     const found = findValueWithYear2026(value);
     if (found) return found;
   }
 
   return null;
+}
+
+function findBudget2026InText(text) {
+  const plain = String(text || "").replace(/\s+/g, " ");
+  if (!plain || !plain.includes("2026")) return null;
+
+  const yearFirst = plain.match(/2026[^\d€]{0,90}([€]?\s?\d[\d\s.,]{2,})\s*(EUR|€)?/i);
+  if (yearFirst && yearFirst[1]) {
+    const numeric = amountToMoneyString(yearFirst[1]);
+    if (numeric) return numeric;
+  }
+
+  const amountFirst = plain.match(/([€]?\s?\d[\d\s.,]{2,})\s*(EUR|€)[^\d]{0,80}2026/i);
+  if (amountFirst && amountFirst[1]) {
+    const numeric = amountToMoneyString(amountFirst[1]);
+    if (numeric) return numeric;
+  }
+
+  return null;
+}
+
+function stringifyValue(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function extractActionMetadata(metadata) {
@@ -404,14 +535,14 @@ function extractActionMetadata(metadata) {
 }
 
 function formatMoney(minValue, maxValue) {
-  const min = Number(minValue);
-  const max = Number(maxValue);
-  if (Number.isFinite(min) && Number.isFinite(max) && max > 0) {
+  const min = parseNumeric(minValue);
+  const max = parseNumeric(maxValue);
+  if (min !== null && max !== null) {
     if (min === max) return `${max.toLocaleString("en-US")} EUR`;
     return `${min.toLocaleString("en-US")} - ${max.toLocaleString("en-US")} EUR`;
   }
-  if (Number.isFinite(max) && max > 0) return `${max.toLocaleString("en-US")} EUR`;
-  if (Number.isFinite(min) && min > 0) return `${min.toLocaleString("en-US")} EUR`;
+  if (max !== null) return `${max.toLocaleString("en-US")} EUR`;
+  if (min !== null) return `${min.toLocaleString("en-US")} EUR`;
   return "N/A";
 }
 
