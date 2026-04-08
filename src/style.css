@@ -3,11 +3,15 @@
 :root {
   --bg-a: #edf2ff;
   --bg-b: #f4fcf6;
+  --bg-c: #f8fbff;
   --ink: #112534;
   --muted: #4f6472;
   --line: #d4dee6;
   --surface: #ffffff;
   --surface-soft: #f7fafc;
+  --glass-surface: rgba(255, 255, 255, 0.66);
+  --glass-stroke: rgba(255, 255, 255, 0.42);
+  --grid-line: rgba(33, 70, 94, 0.08);
   --brand: #0a6c66;
   --brand-dark: #07524e;
   --accent: #f4a53a;
@@ -22,17 +26,48 @@ body {
   margin: 0;
   color: var(--ink);
   font-family: "Source Sans 3", "Segoe UI", Arial, sans-serif;
+  position: relative;
+  overflow-x: hidden;
   background:
     radial-gradient(55rem 55rem at -10% -20%, #d7e8ff 0%, transparent 58%),
     radial-gradient(42rem 42rem at 110% -15%, #d6f3e5 0%, transparent 62%),
-    linear-gradient(160deg, var(--bg-a) 0%, var(--bg-b) 100%);
+    linear-gradient(160deg, var(--bg-a) 0%, var(--bg-b) 55%, var(--bg-c) 100%);
   min-height: 100vh;
 }
 
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at 20% 18%, #000 0%, #000 34%, transparent 72%);
+  opacity: 0.42;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  width: 36rem;
+  height: 36rem;
+  right: -14rem;
+  bottom: -16rem;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(10, 108, 102, 0.22) 0%, rgba(10, 108, 102, 0) 68%);
+  filter: blur(4px);
+}
+
 .container {
+  position: relative;
+  z-index: 1;
   max-width: 1340px;
   margin: 0 auto;
   padding: 1.2rem;
+  animation: rise-in 340ms ease both;
 }
 
 .topbar {
@@ -41,10 +76,11 @@ body {
   align-items: flex-end;
   gap: 1rem;
   padding: 1.1rem 1.1rem 1rem;
-  background: linear-gradient(135deg, #ffffff 0%, #f7fbff 100%);
-  border: 1px solid var(--line);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.76) 0%, rgba(245, 252, 255, 0.56) 100%);
+  border: 1px solid var(--glass-stroke);
   border-radius: 18px;
-  box-shadow: 0 6px 20px rgba(17, 37, 52, 0.06);
+  box-shadow: 0 16px 34px rgba(17, 37, 52, 0.11);
+  backdrop-filter: blur(10px);
 }
 
 .eyebrow {
@@ -68,10 +104,11 @@ h1 {
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--glass-stroke);
   border-radius: 999px;
   padding: 0.45rem 0.9rem;
+  backdrop-filter: blur(8px);
 }
 
 select,
@@ -102,6 +139,11 @@ select:focus,
   grid-template-columns: minmax(220px, 1fr) auto auto auto;
   gap: 0.6rem;
   margin: 0.9rem 0;
+  padding: 0.75rem;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.62), rgba(242, 250, 254, 0.46));
+  border: 1px solid var(--glass-stroke);
+  backdrop-filter: blur(8px);
 }
 
 .btn {
@@ -147,6 +189,11 @@ select:focus,
   align-items: center;
   color: var(--muted);
   margin-bottom: 0.58rem;
+  background: var(--glass-surface);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  backdrop-filter: blur(8px);
 }
 
 .meta p {
@@ -159,6 +206,11 @@ select:focus,
   gap: 0.6rem;
   margin-bottom: 0.64rem;
   flex-wrap: wrap;
+  background: var(--glass-surface);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 12px;
+  padding: 0.52rem 0.7rem;
+  backdrop-filter: blur(8px);
 }
 
 #pageInfo {
@@ -167,11 +219,12 @@ select:focus,
 }
 
 .table-wrap {
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(250, 253, 255, 0.74));
+  border: 1px solid var(--glass-stroke);
   border-radius: 16px;
   overflow: auto;
   box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
 }
 
 table {
@@ -184,7 +237,7 @@ thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #f7fafc;
+  background: linear-gradient(180deg, #fafdff 0%, #f3f9fd 100%);
   border-bottom: 1px solid var(--line);
   text-align: left;
   font-size: 0.76rem;
@@ -205,8 +258,48 @@ tbody tr:hover {
   background: #f2f9fa;
 }
 
+tbody tr.is-forthcoming {
+  background: #fff8ee;
+}
+
+tbody tr.is-forthcoming:hover {
+  background: #fff2de;
+}
+
 .desc-cell {
   max-width: 36ch;
+}
+
+.budget-cell {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.budget-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.budget-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  background: #f4a53a;
+  color: #10212e;
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.budget-help {
+  margin: 0;
+  color: #7b4a0f;
+  font-size: 0.76rem;
+  line-height: 1.2;
 }
 
 .desc-preview {
@@ -243,11 +336,23 @@ a.call-link {
 }
 
 .call-card {
-  border: 1px solid var(--line);
+  border: 1px solid var(--glass-stroke);
   border-radius: 14px;
-  background: var(--surface);
-  box-shadow: 0 10px 22px rgba(17, 37, 52, 0.08);
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.82) 0%, rgba(247, 252, 255, 0.7) 100%);
+  box-shadow: 0 14px 24px rgba(17, 37, 52, 0.1);
   padding: 0.85rem;
+  backdrop-filter: blur(8px);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.call-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 28px rgba(17, 37, 52, 0.14);
+}
+
+.call-card.is-forthcoming {
+  background: #fffaf2;
+  border-color: #efce97;
 }
 
 .card-title {
@@ -264,6 +369,11 @@ a.call-link {
 
 .card-field strong {
   color: #395968;
+}
+
+.card-field-budget {
+  display: grid;
+  gap: 0.26rem;
 }
 
 .card-description {
@@ -292,11 +402,12 @@ a.call-link {
 }
 
 .modal-shell {
-  background: #ffffff;
-  border: 1px solid var(--line);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.94) 0%, rgba(246, 251, 254, 0.88) 100%);
+  border: 1px solid var(--glass-stroke);
   border-radius: 16px;
   box-shadow: 0 26px 50px rgba(17, 37, 52, 0.28);
   overflow: hidden;
+  backdrop-filter: blur(10px);
 }
 
 .modal-head {
@@ -352,6 +463,17 @@ a.call-link {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.45;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 980px) {

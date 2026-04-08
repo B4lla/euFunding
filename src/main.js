@@ -16,6 +16,7 @@ const COLUMN_ORDER = [
 ];
 const DESCRIPTION_COLUMN = "Topic description";
 const FULL_DESCRIPTION_FIELD = "Topic description full";
+const BUDGET_COLUMN = "Budget (EUR) - Year : 2026";
 const DESCRIPTION_PREVIEW_LENGTH = 220;
 
 const CACHE_KEY = "eu-calls-cache-v4";
@@ -32,7 +33,7 @@ const I18N = {
     period: "Funding period 2021-2027",
     language: "Language",
     searchPlaceholder: "Search by title, code, programme...",
-    refresh: "Refresh snapshot",
+    refresh: "Refresh live data",
     exportCsv: "Export CSV",
     exportXlsx: "Export Excel",
     statusLoading: "Loading data...",
@@ -54,13 +55,15 @@ const I18N = {
     modalDeadline: "Deadline",
     modalCallLink: "Call link",
     modalDescription: "Topic description",
+    budgetWarningLabel: "Estimated budget",
+    budgetWarningDefault: "2026 budget not published yet. Showing {year} amount.",
   },
   ro: {
     title: "Tablou apeluri UE - propuneri",
     period: "Perioada de finantare 2021-2027",
     language: "Limba",
     searchPlaceholder: "Cauta dupa titlu, cod, program...",
-    refresh: "Actualizeaza snapshot",
+    refresh: "Actualizeaza date live",
     exportCsv: "Export CSV",
     exportXlsx: "Export Excel",
     statusLoading: "Se incarca datele...",
@@ -82,6 +85,8 @@ const I18N = {
     modalDeadline: "Termen limita",
     modalCallLink: "Link apel",
     modalDescription: "Descriere topic",
+    budgetWarningLabel: "Buget estimat",
+    budgetWarningDefault: "Bugetul 2026 nu este publicat inca. Se afiseaza suma din {year}.",
   },
 };
 
@@ -143,6 +148,10 @@ function normalizeClientRow(row) {
   if (!String(normalized[FULL_DESCRIPTION_FIELD] || "").trim()) {
     normalized[FULL_DESCRIPTION_FIELD] = normalized[DESCRIPTION_COLUMN];
   }
+  normalized._statusLabel = String(normalized._statusLabel || "").toLowerCase();
+  normalized._budgetEstimated = normalized._budgetEstimated === true || String(normalized._budgetEstimated).toLowerCase() === "true";
+  normalized._budgetSourceYear = String(normalized._budgetSourceYear || "").trim();
+  normalized._budgetFallbackWarning = String(normalized._budgetFallbackWarning || "").trim();
   return normalized;
 }
 
@@ -206,6 +215,50 @@ function getDescriptionPreview(row) {
 function hasExpandedDescription(row) {
   const full = getFullDescription(row);
   return full !== "N/A" && full.length > DESCRIPTION_PREVIEW_LENGTH;
+}
+
+function isForthcomingRow(row) {
+  return String(row._statusLabel || "").toLowerCase() === "forthcoming";
+}
+
+function hasBudgetWarning(row) {
+  return isForthcomingRow(row) && row._budgetEstimated && sanitize(row[BUDGET_COLUMN]) !== "N/A";
+}
+
+function getBudgetWarningText(row) {
+  if (row._budgetFallbackWarning) return row._budgetFallbackWarning;
+  const year = row._budgetSourceYear || "previous year";
+  return t("budgetWarningDefault", { year });
+}
+
+function createBudgetCell(row) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "budget-cell";
+
+  const line = document.createElement("div");
+  line.className = "budget-line";
+
+  const value = document.createElement("span");
+  value.className = "budget-value";
+  value.textContent = sanitize(row[BUDGET_COLUMN]);
+  line.appendChild(value);
+
+  if (hasBudgetWarning(row)) {
+    const warning = document.createElement("span");
+    warning.className = "budget-warning-badge";
+    warning.textContent = "!";
+    warning.title = getBudgetWarningText(row);
+    warning.setAttribute("aria-label", t("budgetWarningLabel"));
+    line.appendChild(warning);
+
+    const help = document.createElement("p");
+    help.className = "budget-help";
+    help.textContent = getBudgetWarningText(row);
+    wrapper.appendChild(help);
+  }
+
+  wrapper.prepend(line);
+  return wrapper;
 }
 
 function createDescriptionCell(row) {
@@ -282,6 +335,35 @@ function appendCardField(card, label, value, isLink = false) {
   card.appendChild(line);
 }
 
+function appendCardBudgetField(card, row) {
+  const line = document.createElement("p");
+  line.className = "card-field card-field-budget";
+
+  const strong = document.createElement("strong");
+  strong.textContent = "Budget 2026: ";
+  line.appendChild(strong);
+
+  const value = document.createElement("span");
+  value.textContent = sanitize(row[BUDGET_COLUMN]);
+  line.appendChild(value);
+
+  if (hasBudgetWarning(row)) {
+    const warning = document.createElement("span");
+    warning.className = "budget-warning-badge";
+    warning.textContent = "!";
+    warning.title = getBudgetWarningText(row);
+    warning.setAttribute("aria-label", t("budgetWarningLabel"));
+    line.appendChild(warning);
+
+    const help = document.createElement("small");
+    help.className = "budget-help";
+    help.textContent = getBudgetWarningText(row);
+    line.appendChild(help);
+  }
+
+  card.appendChild(line);
+}
+
 function renderCards(pageRows) {
   if (!refs.cardList) return;
   refs.cardList.innerHTML = "";
@@ -291,6 +373,7 @@ function renderCards(pageRows) {
   for (const row of pageRows) {
     const card = document.createElement("article");
     card.className = "call-card";
+    if (isForthcomingRow(row)) card.classList.add("is-forthcoming");
 
     const title = document.createElement("h3");
     title.className = "card-title";
@@ -300,7 +383,7 @@ function renderCards(pageRows) {
     appendCardField(card, t("modalTopicCode"), row["Topic code"]);
     appendCardField(card, "Programme", row["Programme"]);
     appendCardField(card, t("modalDeadline"), row["Deadline"]);
-    appendCardField(card, "Budget 2026", row["Budget (EUR) - Year : 2026"]);
+    appendCardBudgetField(card, row);
 
     const descriptionWrap = document.createElement("div");
     descriptionWrap.className = "card-description";
@@ -347,6 +430,7 @@ function renderRows() {
 
   for (const row of pageRows) {
     const tr = document.createElement("tr");
+    if (isForthcomingRow(row)) tr.classList.add("is-forthcoming");
 
     for (const col of COLUMN_ORDER) {
       const td = document.createElement("td");
@@ -360,6 +444,8 @@ function renderRows() {
         td.appendChild(a);
       } else if (col === DESCRIPTION_COLUMN) {
         td.appendChild(createDescriptionCell(row));
+      } else if (col === BUDGET_COLUMN) {
+        td.appendChild(createBudgetCell(row));
       } else {
         td.textContent = sanitize(row[col]);
       }
@@ -483,14 +569,18 @@ async function loadSnapshot(forceRefresh = false) {
   refs.statusText.textContent = t("statusLoading");
 
   const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-  const endpoints = isLocal ? ["/data/calls.json", "/api/calls"] : ["/api/calls", "/data/calls.json"];
+  let endpoints = isLocal ? ["/data/calls.json", "/api/calls"] : ["/api/calls", "/data/calls.json"];
+  if (forceRefresh) {
+    // On refresh, always try the live API first even in local dev.
+    endpoints = ["/api/calls", "/data/calls.json"];
+  }
 
   try {
     let payload = null;
     let responseSource = "";
 
     for (const endpoint of endpoints) {
-      const url = forceRefresh ? `${endpoint}?refresh=1` : endpoint;
+      const url = forceRefresh && endpoint === "/api/calls" ? `${endpoint}?refresh=1` : endpoint;
       const res = await fetchWithTimeout(url, forceRefresh ? { cache: "no-store" } : {});
       if (!res.ok) continue;
       const data = await res.json();
@@ -622,5 +712,5 @@ refs.nextPageBtn.addEventListener("click", () => {
     applyPayload(localPayload, "local-cache");
   }
 
-  loadSnapshot();
+  loadSnapshot(true);
 })();

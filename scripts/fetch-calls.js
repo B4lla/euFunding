@@ -3,24 +3,13 @@ const path = require("path");
 
 const SEARCH_URL = "https://api.tech.ec.europa.eu/search-api/prod/rest/search";
 const API_KEY = "SEDIA";
-const PAGE_SIZE = 50;
-const MAX_PAGES_PER_KEYWORD = 1;
-const MAX_API_CALLS = 8;
-const MAX_ROWS = 300;
+const SEARCH_TEXT = "***";
+const PAGE_SIZE = 100;
+const MAX_API_CALLS = 20;
 const REQUEST_TIMEOUT_MS = 4000;
-
-const KEYWORDS = [
-  "2026",
-  "HORIZON-2026",
-  "LIFE-2026",
-  "DIGITAL-2026",
-  "CEF-2026",
-  "ERC-2026",
-  "MSCA-2026",
-  "EIC-2026",
-  "call for proposals 2026",
-  "tender 2026",
-];
+const PROGRAMME_PERIOD = "2021 - 2027";
+const STATUS_FORTHCOMING = "31094501";
+const STATUS_OPEN = "31094502";
 
 const PROGRAMME_CODE_MAP = {
   "43108390": "Horizon Europe",
@@ -47,6 +36,18 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function buildSearchQuery() {
+  return {
+    bool: {
+      must: [
+        { terms: { type: ["1", "2", "8"] } },
+        { terms: { status: [STATUS_FORTHCOMING, STATUS_OPEN] } },
+        { term: { programmePeriod: PROGRAMME_PERIOD } },
+      ],
+    },
+  };
 }
 
 function pickMeta(metadata, key) {
@@ -210,34 +211,34 @@ function extractAmountFromObject(node) {
   return null;
 }
 
-function keyLooksYear2026(key) {
-  return /(^|\D)2026(\D|$)/.test(String(key || ""));
+function keyLooksYear(key, year) {
+  return new RegExp(`(^|\\D)${String(year)}(\\D|$)`).test(String(key || ""));
 }
 
-function objectLooksYear2026(node) {
+function objectLooksYear(node, year) {
   if (!node || typeof node !== "object") return false;
   const markers = [node.year, node.budgetYear, node.fiscalYear, node.callYear, node.annualYear, node.period];
-  return markers.some((v) => keyLooksYear2026(v));
+  return markers.some((v) => keyLooksYear(v, year));
 }
 
-function findValueWithYear2026(node) {
+function findValueWithYear(node, year) {
   if (node === null || node === undefined) return null;
   if (Array.isArray(node)) {
     for (const item of node) {
-      const found = findValueWithYear2026(item);
+      const found = findValueWithYear(item, year);
       if (found) return found;
     }
     return null;
   }
   if (typeof node !== "object") return null;
 
-  if (objectLooksYear2026(node)) {
+  if (objectLooksYear(node, year)) {
     const ownAmount = extractAmountFromObject(node);
     if (ownAmount) return ownAmount;
   }
 
   for (const [key, value] of Object.entries(node)) {
-    if (keyLooksYear2026(key)) {
+    if (keyLooksYear(key, year)) {
       if (typeof value === "number") return `${value.toLocaleString("en-US")} EUR`;
       if (typeof value === "string") {
         const numeric = amountToMoneyString(value);
@@ -246,24 +247,27 @@ function findValueWithYear2026(node) {
       const amount = extractAmountFromObject(value);
       if (amount) return amount;
     }
-    const found = findValueWithYear2026(value);
+    const found = findValueWithYear(value, year);
     if (found) return found;
   }
 
   return null;
 }
 
-function findBudget2026InText(text) {
+function findBudgetInTextForYear(text, year) {
+  const yearText = String(year);
   const plain = String(text || "").replace(/\s+/g, " ");
-  if (!plain || !plain.includes("2026")) return null;
+  if (!plain || !plain.includes(yearText)) return null;
 
-  const yearFirst = plain.match(/2026[^\d€]{0,90}([€]?\s?\d[\d\s.,]{2,})\s*(EUR|€)?/i);
+  const yearFirstRegex = new RegExp(`${yearText}[^\\d€]{0,90}([€]?\\s?\\d[\\d\\s.,]{2,})\\s*(EUR|€)?`, "i");
+  const yearFirst = plain.match(yearFirstRegex);
   if (yearFirst && yearFirst[1]) {
     const numeric = amountToMoneyString(yearFirst[1]);
     if (numeric) return numeric;
   }
 
-  const amountFirst = plain.match(/([€]?\s?\d[\d\s.,]{2,})\s*(EUR|€)[^\d]{0,80}2026/i);
+  const amountFirstRegex = new RegExp(`([€]?\\s?\\d[\\d\\s.,]{2,})\\s*(EUR|€)[^\\d]{0,80}${yearText}`, "i");
+  const amountFirst = plain.match(amountFirstRegex);
   if (amountFirst && amountFirst[1]) {
     const numeric = amountToMoneyString(amountFirst[1]);
     if (numeric) return numeric;
@@ -282,7 +286,29 @@ function stringifyValue(value) {
   }
 }
 
-function extractBudget2026(metadata, fullDescription) {
+function resolveStatus(metadata, actionStatusRaw) {
+  const metaStatus = String(stripHtml(pickMeta(metadata, "status"))).trim();
+  if (metaStatus === STATUS_FORTHCOMING) {
+    return { code: STATUS_FORTHCOMING, label: "forthcoming" };
+  }
+  if (metaStatus === STATUS_OPEN) {
+    return { code: STATUS_OPEN, label: "open" };
+  }
+
+  const actionStatus = String(actionStatusRaw || "").toLowerCase();
+  if (actionStatus.includes("forthcoming")) {
+    return { code: STATUS_FORTHCOMING, label: "forthcoming" };
+  }
+  if (actionStatus.includes("open")) {
+    return { code: STATUS_OPEN, label: "open" };
+  }
+  if (actionStatus.includes("closed")) {
+    return { code: "31094503", label: "closed" };
+  }
+  return { code: metaStatus || "", label: "unknown" };
+}
+
+function extractBudgetInfo(metadata, fullDescription, statusLabel) {
   const budgetCandidates = [
     pickMeta(metadata, "budgetOverview"),
     pickMeta(metadata, "budget"),
@@ -293,21 +319,64 @@ function extractBudget2026(metadata, fullDescription) {
     pickMeta(metadata, "financialData"),
   ];
 
-  for (const candidate of budgetCandidates) {
-    const parsed = parseMaybeJson(candidate);
-    const found = findValueWithYear2026(parsed);
-    if (found) return normalizeMoneyValue(found);
-  }
-
   const textCandidate = [
     stringifyValue(pickMeta(metadata, "budgetOverview")),
     stringifyValue(pickMeta(metadata, "budget")),
     fullDescription,
   ].join(" ");
-  const fromText = findBudget2026InText(textCandidate);
-  if (fromText) return normalizeMoneyValue(fromText);
 
-  return "N/A";
+  const exact2026 = (() => {
+    for (const candidate of budgetCandidates) {
+      const parsed = parseMaybeJson(candidate);
+      const found = findValueWithYear(parsed, 2026);
+      if (found) return normalizeMoneyValue(found);
+    }
+    const textFound = findBudgetInTextForYear(textCandidate, 2026);
+    return textFound ? normalizeMoneyValue(textFound) : null;
+  })();
+
+  if (exact2026) {
+    return {
+      amount: exact2026,
+      sourceYear: 2026,
+      isEstimated: false,
+      warning: "",
+    };
+  }
+
+  if (statusLabel === "forthcoming") {
+    for (let year = 2025; year >= 2021; year -= 1) {
+      for (const candidate of budgetCandidates) {
+        const parsed = parseMaybeJson(candidate);
+        const found = findValueWithYear(parsed, year);
+        if (found) {
+          return {
+            amount: normalizeMoneyValue(found),
+            sourceYear: year,
+            isEstimated: true,
+            warning: `2026 budget not published yet. Showing ${year} amount.`,
+          };
+        }
+      }
+
+      const textFound = findBudgetInTextForYear(textCandidate, year);
+      if (textFound) {
+        return {
+          amount: normalizeMoneyValue(textFound),
+          sourceYear: year,
+          isEstimated: true,
+          warning: `2026 budget not published yet. Showing ${year} amount.`,
+        };
+      }
+    }
+  }
+
+  return {
+    amount: "N/A",
+    sourceYear: null,
+    isEstimated: false,
+    warning: "",
+  };
 }
 
 function extractActionMetadata(metadata) {
@@ -352,28 +421,34 @@ function isAvailable(status, deadlineIso) {
   return false;
 }
 
+function normalizeStatusLabel(label) {
+  const status = String(label || "").toLowerCase();
+  if (status === "open" || status.includes("open")) return "open";
+  if (status === "forthcoming" || status.includes("forthcoming")) return "forthcoming";
+  if (status === "closed" || status.includes("closed")) return "closed";
+  return "unknown";
+}
+
 function normalize(item) {
   const md = item && typeof item.metadata === "object" ? item.metadata : {};
-  const lang = String(item.language || pickMeta(md, "language") || "").toLowerCase();
-  if (lang && lang !== "en") return null;
 
   const topicCode = firstNonEmpty(
     stripHtml(pickMeta(md, "identifier")),
     stripHtml(pickMeta(md, "callIdentifier")),
     stripHtml(item.reference),
+    stripHtml(pickMeta(md, "id")),
+    stripHtml(item.id),
   );
   if (!topicCode) return null;
 
-  const periodRaw = String(pickMeta(md, "programmePeriod") || "");
-  if (!periodLooksEligible(topicCode, periodRaw)) return null;
-
   const action = extractActionMetadata(md);
+  const statusInfo = resolveStatus(md, action.status);
+  const statusLabel = normalizeStatusLabel(statusInfo.label);
   const deadlineIso = toIsoDate(firstNonEmpty(action.deadline, stripHtml(pickMeta(md, "deadlineDate"))));
   const openingIso = toIsoDate(firstNonEmpty(action.openingDate, stripHtml(pickMeta(md, "openingDate")), stripHtml(pickMeta(md, "plannedOpeningDate"))));
-  if (!isAvailable(action.status, deadlineIso)) return null;
 
   const fullDescription = firstNonEmpty(stripHtml(pickMeta(md, "descriptionByte")), stripHtml(item.summary), stripHtml(item.content), "N/A");
-  const budget = extractBudget2026(md, fullDescription);
+  const budget = extractBudgetInfo(md, fullDescription, statusLabel);
 
   const programmeRaw = firstNonEmpty(stripHtml(pickMeta(md, "frameworkProgramme")), stripHtml(pickMeta(md, "programme")));
   const actionRaw = firstNonEmpty(stripHtml(pickMeta(md, "typesOfAction")), stripHtml(pickMeta(md, "type")));
@@ -385,7 +460,13 @@ function normalize(item) {
     "Topic title": nonEmptyOrNA(truncate(firstNonEmpty(stripHtml(pickMeta(md, "title")), stripHtml(item.title), stripHtml(item.summary), topicCode), 220)),
     "Topic description": nonEmptyOrNA(truncate(fullDescription, 1200)),
     "Topic description full": nonEmptyOrNA(truncate(fullDescription, 12000)),
-    "Budget (EUR) - Year : 2026": nonEmptyOrNA(budget),
+    "Budget (EUR) - Year : 2026": nonEmptyOrNA(budget.amount),
+    Status: statusLabel === "forthcoming" ? "Forthcoming" : statusLabel === "open" ? "Open" : "N/A",
+    _statusLabel: statusLabel,
+    _statusCode: statusInfo.code || "",
+    _budgetEstimated: Boolean(budget.isEstimated),
+    _budgetSourceYear: budget.sourceYear || "",
+    _budgetFallbackWarning: budget.warning || "",
     Stages: nonEmptyOrNA(stripHtml(pickMeta(md, "stages")) || action.stages),
     "Opening date": nonEmptyOrNA(openingIso),
     Deadline: nonEmptyOrNA(deadlineIso),
@@ -395,56 +476,56 @@ function normalize(item) {
   };
 }
 
-async function fetchPage(keyword, pageNumber) {
+async function fetchPage(pageNumber) {
   const params = new URLSearchParams({
     apiKey: API_KEY,
-    text: keyword,
+    text: SEARCH_TEXT,
     pageSize: String(PAGE_SIZE),
     pageNumber: String(pageNumber),
   });
 
-  const res = await fetchWithTimeout(`${SEARCH_URL}?${params.toString()}`, { method: "POST", body: "" }, REQUEST_TIMEOUT_MS);
-  if (!res || !res.ok) return [];
+  const body = new FormData();
+  body.append("sort", new Blob([JSON.stringify({ order: "ASC", field: "sortStatus" })], { type: "application/json" }));
+  body.append("query", new Blob([JSON.stringify(buildSearchQuery())], { type: "application/json" }));
+  body.append("languages", new Blob([JSON.stringify(["en"])], { type: "application/json" }));
+
+  const res = await fetchWithTimeout(`${SEARCH_URL}?${params.toString()}`, { method: "POST", body }, REQUEST_TIMEOUT_MS);
+  if (!res || !res.ok) return { items: [], totalResults: 0 };
 
   try {
     const data = await res.json();
-    if (Array.isArray(data.results)) return data.results;
-    if (Array.isArray(data.content)) return data.content;
-    return [];
+    if (Array.isArray(data.results)) {
+      return { items: data.results, totalResults: Number(data.totalResults || data.total || data.results.length || 0) };
+    }
+    if (Array.isArray(data.content)) {
+      return { items: data.content, totalResults: Number(data.totalResults || data.total || data.content.length || 0) };
+    }
+    return { items: [], totalResults: 0 };
   } catch {
-    return [];
+    return { items: [], totalResults: 0 };
   }
 }
 
 async function main() {
   const rows = [];
-  const seen = new Set();
   let calls = 0;
+  let totalPages = 1;
 
-  for (const keyword of KEYWORDS) {
-    for (let page = 1; page <= MAX_PAGES_PER_KEYWORD; page += 1) {
-      if (calls >= MAX_API_CALLS || rows.length >= MAX_ROWS) break;
+  for (let page = 1; page <= totalPages; page += 1) {
+    if (calls >= MAX_API_CALLS) break;
 
-      const items = await fetchPage(keyword, page);
-      calls += 1;
-      if (!items.length) break;
-
-      for (const item of items) {
-        const row = normalize(item);
-        if (!row) continue;
-
-        const key = `${row["Topic code"]}::${row["Deadline"]}::${row["CAll link"]}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-
-        rows.push(row);
-        if (rows.length >= MAX_ROWS) break;
-      }
-
-      if (items.length < PAGE_SIZE) break;
+    const result = await fetchPage(page);
+    calls += 1;
+    if (page === 1 && result.totalResults > 0) {
+      totalPages = Math.ceil(result.totalResults / PAGE_SIZE);
     }
+    if (!result.items.length) break;
 
-    if (calls >= MAX_API_CALLS || rows.length >= MAX_ROWS) break;
+    for (const item of result.items) {
+      const row = normalize(item);
+      if (!row) continue;
+      rows.push(row);
+    }
   }
 
   rows.sort((a, b) => {
@@ -461,10 +542,11 @@ async function main() {
     total: rows.length,
     limits: {
       pageSize: PAGE_SIZE,
-      maxPagesPerKeyword: MAX_PAGES_PER_KEYWORD,
+      searchText: SEARCH_TEXT,
+      programmePeriod: PROGRAMME_PERIOD,
       maxApiCalls: MAX_API_CALLS,
-      maxRows: MAX_ROWS,
       apiCallsUsed: calls,
+      totalPages,
     },
     items: rows,
   };
