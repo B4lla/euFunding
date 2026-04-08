@@ -22,6 +22,7 @@ const DESCRIPTION_PREVIEW_LENGTH = 220;
 const CACHE_KEY = "eu-calls-cache-v4";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const PAGE_SIZE = 25;
+const EXPORT_FETCH_PAGE_SIZE = 100;
 const REQUEST_TIMEOUT_MS = 10000;
 const THEME_KEY = "eu-dashboard-theme";
 
@@ -60,6 +61,10 @@ const I18N = {
     budgetWarningDefault: "2026 budget not published yet. Showing {year} amount.",
     themeSwitchToDark: "Switch to dark mode",
     themeSwitchToLight: "Switch to light mode",
+    showSelected: "Show selected ({count})",
+    showAllRows: "Show all",
+    clearSelected: "Clear selected",
+    selectedModeStatus: "Selected mode: {count} rows.",
   },
   ro: {
     title: "Tablou apeluri UE - propuneri",
@@ -92,6 +97,10 @@ const I18N = {
     budgetWarningDefault: "Bugetul 2026 nu este publicat inca. Se afiseaza suma din {year}.",
     themeSwitchToDark: "Comuta la mod intunecat",
     themeSwitchToLight: "Comuta la mod luminos",
+    showSelected: "Arata selectate ({count})",
+    showAllRows: "Arata tot",
+    clearSelected: "Goleste selectia",
+    selectedModeStatus: "Mod selectie: {count} randuri.",
   },
 };
 
@@ -106,6 +115,9 @@ const state = {
   pageSize: PAGE_SIZE,
   page: 1,
   theme: "light",
+  showSelectedOnly: false,
+  selectedIds: new Set(),
+  selectedRows: new Map(),
   activeDescriptionRow: null,
 };
 
@@ -116,6 +128,8 @@ const refs = {
   langSelect: document.getElementById("langSelect"),
   searchInput: document.getElementById("searchInput"),
   refreshBtn: document.getElementById("refreshBtn"),
+  selectedOnlyBtn: document.getElementById("selectedOnlyBtn"),
+  clearSelectedBtn: document.getElementById("clearSelectedBtn"),
   exportCsvBtn: document.getElementById("exportCsvBtn"),
   exportXlsxBtn: document.getElementById("exportXlsxBtn"),
   themeToggleBtn: document.getElementById("themeToggleBtn"),
@@ -155,6 +169,13 @@ function sanitize(value) {
   return String(value);
 }
 
+function buildRowKey(row) {
+  const code = sanitize(row["Topic code"]);
+  const link = sanitize(row["CAll link"]);
+  const deadline = sanitize(row["Deadline"]);
+  return `${code}::${link}::${deadline}`;
+}
+
 function normalizeClientRow(row) {
   const normalized = row && typeof row === "object" ? { ...row } : {};
   normalized[DESCRIPTION_COLUMN] = sanitize(normalized[DESCRIPTION_COLUMN]);
@@ -165,7 +186,56 @@ function normalizeClientRow(row) {
   normalized._budgetEstimated = normalized._budgetEstimated === true || String(normalized._budgetEstimated).toLowerCase() === "true";
   normalized._budgetSourceYear = String(normalized._budgetSourceYear || "").trim();
   normalized._budgetFallbackWarning = String(normalized._budgetFallbackWarning || "").trim();
+  normalized._rowKey = buildRowKey(normalized);
   return normalized;
+}
+
+function isRowSelected(row) {
+  return state.selectedIds.has(row._rowKey);
+}
+
+function setRowSelected(row, selected) {
+  const rowKey = row._rowKey;
+  if (!rowKey) return;
+
+  if (selected) {
+    state.selectedIds.add(rowKey);
+    state.selectedRows.set(rowKey, row);
+    return;
+  }
+
+  state.selectedIds.delete(rowKey);
+  state.selectedRows.delete(rowKey);
+}
+
+function getSelectedRows() {
+  return Array.from(state.selectedRows.values());
+}
+
+function toggleSelectedOnly() {
+  state.showSelectedOnly = !state.showSelectedOnly;
+  renderRows();
+}
+
+function clearSelectedRows() {
+  state.selectedIds.clear();
+  state.selectedRows.clear();
+  state.showSelectedOnly = false;
+  renderRows();
+}
+
+function updateSelectionControls() {
+  const selectedCount = state.selectedRows.size;
+  if (refs.selectedOnlyBtn) {
+    refs.selectedOnlyBtn.textContent = state.showSelectedOnly
+      ? t("showAllRows")
+      : t("showSelected", { count: selectedCount });
+    refs.selectedOnlyBtn.disabled = selectedCount === 0;
+  }
+  if (refs.clearSelectedBtn) {
+    refs.clearSelectedBtn.textContent = t("clearSelected");
+    refs.clearSelectedBtn.disabled = selectedCount === 0;
+  }
 }
 
 function safeParseJSON(raw) {
@@ -253,6 +323,11 @@ function updateMetaText() {
 
 function applyPayload(payload, responseSource = "", requestedPage = 1) {
   state.rows = Array.isArray(payload.items) ? payload.items.map(normalizeClientRow) : [];
+  for (const row of state.rows) {
+    if (state.selectedIds.has(row._rowKey)) {
+      state.selectedRows.set(row._rowKey, row);
+    }
+  }
   state.generatedAt = payload.generatedAt || "";
   state.source = payload.source || responseSource || "";
 
@@ -300,6 +375,34 @@ function getBudgetWarningText(row) {
   if (row._budgetFallbackWarning) return row._budgetFallbackWarning;
   const year = row._budgetSourceYear || "previous year";
   return t("budgetWarningDefault", { year });
+}
+
+function createRowSelectionCheckbox(row) {
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.className = "row-select";
+  input.checked = isRowSelected(row);
+  input.setAttribute("aria-label", `Select ${sanitize(row["Topic code"])}`);
+  input.addEventListener("change", () => {
+    setRowSelected(row, input.checked);
+    updateSelectionControls();
+    renderRows();
+  });
+  return input;
+}
+
+function createCardSelection(row) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "card-select-wrap";
+
+  const input = createRowSelectionCheckbox(row);
+  wrapper.appendChild(input);
+
+  const text = document.createElement("span");
+  text.textContent = sanitize(row["Topic code"]);
+  wrapper.appendChild(text);
+
+  return wrapper;
 }
 
 function createBudgetCell(row) {
@@ -354,23 +457,43 @@ function createDescriptionCell(row) {
 }
 
 function getFilteredRows() {
+  const sourceRows = state.showSelectedOnly ? getSelectedRows() : state.rows;
   const query = refs.searchInput.value.trim().toLowerCase();
-  if (!query) return state.rows;
+  if (!query) return sourceRows;
 
-  return state.rows.filter((row) =>
+  return sourceRows.filter((row) =>
     COLUMN_ORDER.some((col) => String(row[col] || "").toLowerCase().includes(query)),
   );
 }
 
 function updatePager() {
-  const pageLabel = t("pageText", { page: state.page, total: state.totalPages });
+  const pageLabel = state.showSelectedOnly
+    ? t("selectedModeStatus", { count: state.selectedRows.size })
+    : t("pageText", { page: state.page, total: state.totalPages });
   refs.pageInfo.textContent = pageLabel;
   if (refs.pageInfoBottom) refs.pageInfoBottom.textContent = pageLabel;
 
-  refs.prevPageBtn.disabled = state.page <= 1;
-  refs.nextPageBtn.disabled = state.page >= state.totalPages;
-  if (refs.prevPageBtnBottom) refs.prevPageBtnBottom.disabled = state.page <= 1;
-  if (refs.nextPageBtnBottom) refs.nextPageBtnBottom.disabled = state.page >= state.totalPages;
+  const disablePager = state.showSelectedOnly;
+  refs.prevPageBtn.disabled = disablePager || state.page <= 1;
+  refs.nextPageBtn.disabled = disablePager || state.page >= state.totalPages;
+  if (refs.prevPageBtnBottom) refs.prevPageBtnBottom.disabled = disablePager || state.page <= 1;
+  if (refs.nextPageBtnBottom) refs.nextPageBtnBottom.disabled = disablePager || state.page >= state.totalPages;
+}
+
+function updateSelectAllCheckbox() {
+  const selectAll = refs.tableHeadRow.querySelector(".select-head .row-select");
+  if (!selectAll) return;
+
+  const visible = state.filteredRows;
+  if (!visible.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+
+  const selectedCount = visible.reduce((acc, row) => acc + (isRowSelected(row) ? 1 : 0), 0);
+  selectAll.checked = selectedCount === visible.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < visible.length;
 }
 
 function appendCardField(card, label, value, isLink = false) {
@@ -437,6 +560,9 @@ function renderCards(pageRows) {
     const card = document.createElement("article");
     card.className = "call-card";
     if (isForthcomingRow(row)) card.classList.add("is-forthcoming");
+    if (isRowSelected(row)) card.classList.add("is-selected");
+
+    card.appendChild(createCardSelection(row));
 
     const title = document.createElement("h3");
     title.className = "card-title";
@@ -483,16 +609,28 @@ function renderRows() {
 
   if (rows.length === 0) {
     refs.statusText.textContent = t("statusEmpty");
+    updateSelectAllCheckbox();
+    updateSelectionControls();
     return;
   }
 
-  refs.statusText.textContent = `${t("statusLoaded", { count: state.totalRows })} ${t("pageRowsText", { count: rows.length })}`;
+  if (state.showSelectedOnly) {
+    refs.statusText.textContent = `${t("selectedModeStatus", { count: state.selectedRows.size })} ${t("pageRowsText", { count: rows.length })}`;
+  } else {
+    refs.statusText.textContent = `${t("statusLoaded", { count: state.totalRows })} ${t("pageRowsText", { count: rows.length })}`;
+  }
 
   const fragment = document.createDocumentFragment();
 
   for (const row of rows) {
     const tr = document.createElement("tr");
     if (isForthcomingRow(row)) tr.classList.add("is-forthcoming");
+    if (isRowSelected(row)) tr.classList.add("is-selected");
+
+    const tdSelect = document.createElement("td");
+    tdSelect.className = "select-cell";
+    tdSelect.appendChild(createRowSelectionCheckbox(row));
+    tr.appendChild(tdSelect);
 
     for (const col of COLUMN_ORDER) {
       const td = document.createElement("td");
@@ -519,6 +657,8 @@ function renderRows() {
 
   refs.tableBody.appendChild(fragment);
   renderCards(rows);
+  updateSelectAllCheckbox();
+  updateSelectionControls();
 }
 
 function applyLanguage() {
@@ -550,12 +690,31 @@ function applyLanguage() {
   if (refs.modalLinkValue) refs.modalLinkValue.textContent = t("openLink");
 
   refs.tableHeadRow.innerHTML = "";
+
+  const selectHead = document.createElement("th");
+  selectHead.className = "select-head";
+  const selectAll = document.createElement("input");
+  selectAll.type = "checkbox";
+  selectAll.className = "row-select";
+  selectAll.setAttribute("aria-label", "Select visible rows");
+  selectAll.checked = state.filteredRows.length > 0 && state.filteredRows.every((row) => isRowSelected(row));
+  selectAll.addEventListener("change", () => {
+    for (const row of state.filteredRows) {
+      setRowSelected(row, selectAll.checked);
+    }
+    updateSelectionControls();
+    renderRows();
+  });
+  selectHead.appendChild(selectAll);
+  refs.tableHeadRow.appendChild(selectHead);
+
   for (const col of COLUMN_ORDER) {
     const th = document.createElement("th");
     th.textContent = col;
     refs.tableHeadRow.appendChild(th);
   }
 
+  updateSelectionControls();
   renderRows();
 }
 
@@ -741,8 +900,73 @@ function getExportValue(row, col) {
   return sanitize(row[col]);
 }
 
-function exportCsv() {
-  const rows = state.filteredRows;
+async function fetchExportPage(page) {
+  const url = `/api/calls?page=${page}&pageSize=${EXPORT_FETCH_PAGE_SIZE}`;
+  const res = await fetchWithTimeout(url, {
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return readJsonIfPossible(res);
+}
+
+function dedupeRows(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const normalized = normalizeClientRow(row);
+    map.set(normalized._rowKey, normalized);
+  }
+  return Array.from(map.values());
+}
+
+async function fetchAllRowsForExport() {
+  const first = await fetchExportPage(1);
+  if (!first || !Array.isArray(first.items)) return null;
+
+  const collected = first.items.map(normalizeClientRow);
+  const totalPages = Math.max(1, Number(first.totalPages || 1));
+  const cappedPages = Math.min(totalPages, 200);
+
+  for (let page = 2; page <= cappedPages; page += 1) {
+    const next = await fetchExportPage(page);
+    if (!next || !Array.isArray(next.items) || !next.items.length) break;
+    for (const row of next.items) {
+      collected.push(normalizeClientRow(row));
+    }
+  }
+
+  return dedupeRows(collected);
+}
+
+async function getRowsForExport() {
+  if (state.selectedRows.size > 0) {
+    return dedupeRows(getSelectedRows());
+  }
+
+  const fromApi = await fetchAllRowsForExport();
+  if (fromApi && fromApi.length > 0) return fromApi;
+
+  const fallback = await fetchWithTimeout("/data/calls.json", {
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+  if (fallback && fallback.ok) {
+    const data = await readJsonIfPossible(fallback);
+    if (data && Array.isArray(data.items)) {
+      return dedupeRows(data.items);
+    }
+  }
+
+  return dedupeRows(state.filteredRows);
+}
+
+async function exportCsv() {
+  refs.statusText.textContent = t("statusLoading");
+  const rows = await getRowsForExport();
   const lines = [COLUMN_ORDER.map(csvEscape).join(",")];
 
   for (const row of rows) {
@@ -757,6 +981,7 @@ function exportCsv() {
   link.download = "eu_calls_2021_2027.csv";
   link.click();
   URL.revokeObjectURL(url);
+  renderRows();
 }
 
 function loadXlsxLibrary() {
@@ -775,10 +1000,12 @@ function loadXlsxLibrary() {
   return xlsxLoadPromise;
 }
 
-function exportXlsx() {
+async function exportXlsx() {
+  refs.statusText.textContent = t("statusLoading");
   loadXlsxLibrary()
-    .then(() => {
-      const data = state.filteredRows.map((row) => {
+    .then(async () => {
+      const rows = await getRowsForExport();
+      const data = rows.map((row) => {
         const out = {};
         for (const col of COLUMN_ORDER) {
           out[col] = getExportValue(row, col);
@@ -790,9 +1017,11 @@ function exportXlsx() {
       const ws = XLSX.utils.json_to_sheet(data, { header: COLUMN_ORDER });
       XLSX.utils.book_append_sheet(wb, ws, "Calls");
       XLSX.writeFile(wb, "eu_calls_2021_2027.xlsx");
+      renderRows();
     })
     .catch(() => {
       alert("Could not load Excel library.");
+      renderRows();
     });
 }
 
@@ -810,6 +1039,12 @@ refs.searchInput.addEventListener("input", () => {
 });
 
 refs.refreshBtn.addEventListener("click", () => loadSnapshot(true, state.page));
+if (refs.selectedOnlyBtn) {
+  refs.selectedOnlyBtn.addEventListener("click", toggleSelectedOnly);
+}
+if (refs.clearSelectedBtn) {
+  refs.clearSelectedBtn.addEventListener("click", clearSelectedRows);
+}
 refs.exportCsvBtn.addEventListener("click", exportCsv);
 refs.exportXlsxBtn.addEventListener("click", exportXlsx);
 if (refs.themeToggleBtn) {
