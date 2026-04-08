@@ -16,10 +16,23 @@
 
         <div class="controls-inline">
           <label for="langSelect" id="labelLanguage">Language</label>
-          <select id="langSelect" aria-label="Language selector">
-            <option value="en">English</option>
-            <option value="ro">Romana</option>
-          </select>
+          <div class="control-actions">
+            <div class="lang-select-wrap">
+              <select id="langSelect" class="lang-select" aria-label="Language selector">
+                <option value="en">English</option>
+                <option value="ro">Romana</option>
+              </select>
+              <span class="lang-select-chevron" aria-hidden="true">▾</span>
+            </div>
+
+            <button id="themeToggleBtn" class="theme-switch" type="button" aria-label="Toggle color theme" title="Toggle color theme">
+              <span class="theme-switch-track" aria-hidden="true">
+                <span class="theme-switch-icon theme-switch-sun">☀</span>
+                <span class="theme-switch-icon theme-switch-moon">🌙</span>
+                <span class="theme-switch-thumb"></span>
+              </span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -54,6 +67,12 @@
           </thead>
           <tbody id="tableBody"></tbody>
         </table>
+      </section>
+
+      <section class="pager pager-bottom" aria-label="Table pagination bottom">
+        <button id="prevPageBtnBottom" class="btn btn-secondary" type="button">Prev</button>
+        <span id="pageInfoBottom">Page 1/1</span>
+        <button id="nextPageBtnBottom" class="btn btn-secondary" type="button">Next</button>
       </section>
 
       <section class="cards-wrap" aria-live="polite">

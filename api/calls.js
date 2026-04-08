@@ -5,10 +5,9 @@ const CONFIG = {
   SEARCH_URL: "https://api.tech.ec.europa.eu/search-api/prod/rest/search",
   API_KEY: "SEDIA",
   SEARCH_TEXT: "***",
-  PAGE_SIZE: 100,
-  MAX_API_CALLS: 20,
+  DEFAULT_PAGE_SIZE: 25,
+  MAX_PAGE_SIZE: 100,
   REQUEST_TIMEOUT_MS: 6000,
-  GLOBAL_RUNTIME_BUDGET_MS: 25000,
   CACHE_TTL_MS: 12 * 60 * 60 * 1000,
 };
 const PROGRAMME_PERIOD = "2021 - 2027";
@@ -33,7 +32,7 @@ const ACTION_TYPE_CODE_MAP = {
 };
 
 const STATE = {
-  memoryCache: null,
+  memoryCache: new Map(),
 };
 
 module.exports = async function handler(req, res) {
@@ -41,41 +40,35 @@ module.exports = async function handler(req, res) {
     return writeJson(res, 405, { error: "Method not allowed" }, "none");
   }
 
+  const pagination = parsePagination(req.query || {});
   const wantsRefresh = isTruthyFlag(req.query && req.query.refresh);
+  const cacheKey = buildCacheKey(pagination.page, pagination.pageSize);
 
   if (!wantsRefresh) {
-    const cached = readMemoryCache();
+    const cached = readMemoryCache(cacheKey);
     if (cached) {
       return writePayload(req, res, cached, "memory-cache");
     }
 
     const snapshot = await readSnapshotFile();
     if (snapshot && snapshot.items.length > 0) {
-      const payload = {
-        ...snapshot,
-        source: snapshot.source || "Snapshot JSON",
-        total: snapshot.items.length,
-      };
-      setMemoryCache(payload);
+      const payload = paginateSnapshotPayload(snapshot, pagination.page, pagination.pageSize, snapshot.source || "Snapshot JSON");
+      setMemoryCache(cacheKey, payload);
       return writePayload(req, res, payload, "snapshot");
     }
   }
 
-  const live = await fetchLiveData();
-  if (live && live.items.length > 0) {
-    setMemoryCache(live);
+  const live = await fetchLivePage(pagination.page, pagination.pageSize);
+  if (live) {
+    setMemoryCache(cacheKey, live);
     return writePayload(req, res, live, "live");
   }
 
   const snapshot = await readSnapshotFile();
 
   if (snapshot) {
-    const payload = {
-      ...snapshot,
-      source: snapshot.source || "Snapshot JSON",
-      total: snapshot.items.length,
-    };
-    setMemoryCache(payload);
+    const payload = paginateSnapshotPayload(snapshot, pagination.page, pagination.pageSize, snapshot.source || "Snapshot JSON");
+    setMemoryCache(cacheKey, payload);
     return writePayload(req, res, payload, "snapshot-fallback");
   }
 
@@ -87,17 +80,37 @@ function isTruthyFlag(value) {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
-function readMemoryCache() {
-  if (!STATE.memoryCache) return null;
-  if (Date.now() > STATE.memoryCache.expiresAt) return null;
-  return STATE.memoryCache.payload;
+function toPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function setMemoryCache(payload) {
-  STATE.memoryCache = {
+function parsePagination(query) {
+  const page = toPositiveInt(query.page, 1);
+  const requestedPageSize = toPositiveInt(query.pageSize, CONFIG.DEFAULT_PAGE_SIZE);
+  const pageSize = Math.min(CONFIG.MAX_PAGE_SIZE, requestedPageSize);
+  return { page, pageSize };
+}
+
+function buildCacheKey(page, pageSize) {
+  return `${page}:${pageSize}`;
+}
+
+function readMemoryCache(cacheKey) {
+  const entry = STATE.memoryCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    STATE.memoryCache.delete(cacheKey);
+    return null;
+  }
+  return entry.payload;
+}
+
+function setMemoryCache(cacheKey, payload) {
+  STATE.memoryCache.set(cacheKey, {
     expiresAt: Date.now() + CONFIG.CACHE_TTL_MS,
     payload,
-  };
+  });
 }
 
 async function readSnapshotFile() {
@@ -122,53 +135,57 @@ async function readSnapshotFile() {
   return null;
 }
 
-async function fetchLiveData() {
-  const startedAt = Date.now();
+function paginateSnapshotPayload(snapshot, page, pageSize, source) {
+  const allItems = Array.isArray(snapshot.items) ? snapshot.items : [];
+  const total = allItems.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(page, 1), totalPages);
+  const start = (safePage - 1) * pageSize;
+  const end = start + pageSize;
+
+  return {
+    generatedAt: snapshot.generatedAt || new Date().toISOString(),
+    source,
+    total,
+    page: safePage,
+    pageSize,
+    totalPages,
+    limits: {
+      ...(snapshot.limits && typeof snapshot.limits === "object" ? snapshot.limits : {}),
+      pageSize,
+      searchText: CONFIG.SEARCH_TEXT,
+      programmePeriod: PROGRAMME_PERIOD,
+      apiCallsUsed: 0,
+      totalPages,
+    },
+    items: allItems.slice(start, end),
+  };
+}
+
+async function fetchLivePage(pageNumber, pageSize) {
+  const result = await fetchPage(pageNumber, pageSize, CONFIG.REQUEST_TIMEOUT_MS);
+  if (!result) return null;
+
   const rows = [];
-  let apiCalls = 0;
-  let totalPages = 1;
-
-  for (let page = 1; page <= totalPages; page += 1) {
-    const elapsed = Date.now() - startedAt;
-    const remaining = CONFIG.GLOBAL_RUNTIME_BUDGET_MS - elapsed;
-    if (remaining <= 1200) break;
-    if (apiCalls >= CONFIG.MAX_API_CALLS) break;
-
-    const perCallTimeout = Math.max(1200, Math.min(CONFIG.REQUEST_TIMEOUT_MS, remaining - 500));
-    const result = await fetchPage(page, perCallTimeout);
-    apiCalls += 1;
-
-    if (page === 1 && result.totalResults > 0) {
-      totalPages = Math.ceil(result.totalResults / CONFIG.PAGE_SIZE);
-    }
-    if (!result.items.length) break;
-
-    for (const item of result.items) {
-      const row = normalizeItem(item);
-      if (!row) continue;
-      rows.push(row);
-    }
+  for (const item of result.items) {
+    const row = normalizeItem(item);
+    if (!row) continue;
+    rows.push(row);
   }
-
-  rows.sort((a, b) => {
-    const d1 = a["Deadline"];
-    const d2 = b["Deadline"];
-    if (d1 === "N/A" && d2 !== "N/A") return 1;
-    if (d2 === "N/A" && d1 !== "N/A") return -1;
-    return String(d1).localeCompare(String(d2));
-  });
 
   return {
     generatedAt: new Date().toISOString(),
     source: "EU Funding & Tenders Search API (SEDIA)",
-    total: rows.length,
+    total: result.totalResults,
+    page: pageNumber,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(result.totalResults / pageSize)),
     limits: {
-      pageSize: CONFIG.PAGE_SIZE,
+      pageSize,
       searchText: CONFIG.SEARCH_TEXT,
       programmePeriod: PROGRAMME_PERIOD,
-      maxApiCalls: CONFIG.MAX_API_CALLS,
-      apiCallsUsed: apiCalls,
-      totalPages,
+      apiCallsUsed: 1,
+      totalPages: Math.max(1, Math.ceil(result.totalResults / pageSize)),
     },
     items: rows,
   };
@@ -186,11 +203,11 @@ function buildSearchQuery() {
   };
 }
 
-async function fetchPage(pageNumber, timeoutMs) {
+async function fetchPage(pageNumber, pageSize, timeoutMs) {
   const params = new URLSearchParams({
     apiKey: CONFIG.API_KEY,
     text: CONFIG.SEARCH_TEXT,
-    pageSize: String(CONFIG.PAGE_SIZE),
+    pageSize: String(pageSize),
     pageNumber: String(pageNumber),
   });
 
@@ -204,7 +221,7 @@ async function fetchPage(pageNumber, timeoutMs) {
     body,
   }, timeoutMs);
 
-  if (!res || !res.ok) return { items: [], totalResults: 0 };
+  if (!res || !res.ok) return null;
 
   try {
     const data = await res.json();
@@ -222,7 +239,7 @@ async function fetchPage(pageNumber, timeoutMs) {
     }
     return { items: [], totalResults: 0 };
   } catch {
-    return { items: [], totalResults: 0 };
+    return null;
   }
 }
 
@@ -640,7 +657,9 @@ function normalizeStatusLabel(label) {
 
 function buildEtag(payload) {
   const stamp = String(payload.generatedAt || "0").replace(/[-:TZ.]/g, "");
-  return `W/\"${stamp}-${payload.total || 0}\"`;
+  const page = Number(payload.page || 1);
+  const pageSize = Number(payload.pageSize || payload.limits?.pageSize || CONFIG.DEFAULT_PAGE_SIZE);
+  return `W/\"${stamp}-${payload.total || 0}-${page}-${pageSize}\"`;
 }
 
 function writePayload(req, res, payload, source) {

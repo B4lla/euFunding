@@ -21,8 +21,9 @@ const DESCRIPTION_PREVIEW_LENGTH = 220;
 
 const CACHE_KEY = "eu-calls-cache-v4";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 25;
 const REQUEST_TIMEOUT_MS = 10000;
+const THEME_KEY = "eu-dashboard-theme";
 
 let xlsxLoadPromise = null;
 let searchDebounceTimer = null;
@@ -57,6 +58,8 @@ const I18N = {
     modalDescription: "Topic description",
     budgetWarningLabel: "Estimated budget",
     budgetWarningDefault: "2026 budget not published yet. Showing {year} amount.",
+    themeSwitchToDark: "Switch to dark mode",
+    themeSwitchToLight: "Switch to light mode",
   },
   ro: {
     title: "Tablou apeluri UE - propuneri",
@@ -87,6 +90,8 @@ const I18N = {
     modalDescription: "Descriere topic",
     budgetWarningLabel: "Buget estimat",
     budgetWarningDefault: "Bugetul 2026 nu este publicat inca. Se afiseaza suma din {year}.",
+    themeSwitchToDark: "Comuta la mod intunecat",
+    themeSwitchToLight: "Comuta la mod luminos",
   },
 };
 
@@ -96,7 +101,11 @@ const state = {
   filteredRows: [],
   generatedAt: "",
   source: "",
+  totalRows: 0,
+  totalPages: 1,
+  pageSize: PAGE_SIZE,
   page: 1,
+  theme: "light",
   activeDescriptionRow: null,
 };
 
@@ -109,6 +118,7 @@ const refs = {
   refreshBtn: document.getElementById("refreshBtn"),
   exportCsvBtn: document.getElementById("exportCsvBtn"),
   exportXlsxBtn: document.getElementById("exportXlsxBtn"),
+  themeToggleBtn: document.getElementById("themeToggleBtn"),
   tableHeadRow: document.getElementById("tableHeadRow"),
   tableBody: document.getElementById("tableBody"),
   cardList: document.getElementById("cardList"),
@@ -117,6 +127,9 @@ const refs = {
   prevPageBtn: document.getElementById("prevPageBtn"),
   nextPageBtn: document.getElementById("nextPageBtn"),
   pageInfo: document.getElementById("pageInfo"),
+  prevPageBtnBottom: document.getElementById("prevPageBtnBottom"),
+  nextPageBtnBottom: document.getElementById("nextPageBtnBottom"),
+  pageInfoBottom: document.getElementById("pageInfoBottom"),
   descModal: document.getElementById("descModal"),
   modalHeading: document.getElementById("modalHeading"),
   modalCloseBtn: document.getElementById("modalCloseBtn"),
@@ -163,6 +176,52 @@ function safeParseJSON(raw) {
   }
 }
 
+function readCookie(name) {
+  const parts = String(document.cookie || "").split(";");
+  for (const part of parts) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === name) return decodeURIComponent(rest.join("="));
+  }
+  return "";
+}
+
+function saveThemePreference(theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // best effort only
+  }
+  document.cookie = `eu_dashboard_theme=${encodeURIComponent(theme)}; Max-Age=31536000; Path=/; SameSite=Lax`;
+}
+
+function resolveSavedTheme() {
+  const local = localStorage.getItem(THEME_KEY);
+  if (local === "dark" || local === "light") return local;
+
+  const cookieTheme = readCookie("eu_dashboard_theme");
+  if (cookieTheme === "dark" || cookieTheme === "light") return cookieTheme;
+
+  return "light";
+}
+
+function applyTheme(theme) {
+  state.theme = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", state.theme);
+
+  if (refs.themeToggleBtn) {
+    refs.themeToggleBtn.setAttribute("aria-pressed", state.theme === "dark" ? "true" : "false");
+    const label = state.theme === "dark" ? t("themeSwitchToLight") : t("themeSwitchToDark");
+    refs.themeToggleBtn.setAttribute("aria-label", label);
+    refs.themeToggleBtn.setAttribute("title", label);
+  }
+}
+
+function toggleTheme() {
+  const nextTheme = state.theme === "dark" ? "light" : "dark";
+  applyTheme(nextTheme);
+  saveThemePreference(nextTheme);
+}
+
 function saveLocalCache(payload) {
   const cachePayload = {
     cachedAt: Date.now(),
@@ -192,11 +251,23 @@ function updateMetaText() {
   }
 }
 
-function applyPayload(payload, responseSource = "") {
+function applyPayload(payload, responseSource = "", requestedPage = 1) {
   state.rows = Array.isArray(payload.items) ? payload.items.map(normalizeClientRow) : [];
   state.generatedAt = payload.generatedAt || "";
   state.source = payload.source || responseSource || "";
-  state.page = 1;
+
+  const payloadPageSize = Number(payload.pageSize || payload.limits?.pageSize || state.pageSize || PAGE_SIZE);
+  state.pageSize = Number.isFinite(payloadPageSize) && payloadPageSize > 0 ? payloadPageSize : PAGE_SIZE;
+
+  const payloadTotal = Number(payload.total);
+  state.totalRows = Number.isFinite(payloadTotal) && payloadTotal >= 0 ? payloadTotal : state.rows.length;
+
+  const payloadTotalPages = Number(payload.totalPages || Math.ceil(Math.max(state.totalRows, 1) / state.pageSize));
+  state.totalPages = Math.max(1, Number.isFinite(payloadTotalPages) ? payloadTotalPages : 1);
+
+  const payloadPage = Number(payload.page || requestedPage || 1);
+  const safePage = Number.isFinite(payloadPage) ? payloadPage : 1;
+  state.page = Math.min(Math.max(safePage, 1), state.totalPages);
 
   updateMetaText();
   renderRows();
@@ -291,23 +362,15 @@ function getFilteredRows() {
   );
 }
 
-function getVisibleRows(rows) {
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  if (state.page > totalPages) state.page = totalPages;
-  if (state.page < 1) state.page = 1;
+function updatePager() {
+  const pageLabel = t("pageText", { page: state.page, total: state.totalPages });
+  refs.pageInfo.textContent = pageLabel;
+  if (refs.pageInfoBottom) refs.pageInfoBottom.textContent = pageLabel;
 
-  const start = (state.page - 1) * PAGE_SIZE;
-  const end = start + PAGE_SIZE;
-  return {
-    totalPages,
-    pageRows: rows.slice(start, end),
-  };
-}
-
-function updatePager(totalPages) {
-  refs.pageInfo.textContent = t("pageText", { page: state.page, total: totalPages });
   refs.prevPageBtn.disabled = state.page <= 1;
-  refs.nextPageBtn.disabled = state.page >= totalPages;
+  refs.nextPageBtn.disabled = state.page >= state.totalPages;
+  if (refs.prevPageBtnBottom) refs.prevPageBtnBottom.disabled = state.page <= 1;
+  if (refs.nextPageBtnBottom) refs.nextPageBtnBottom.disabled = state.page >= state.totalPages;
 }
 
 function appendCardField(card, label, value, isLink = false) {
@@ -412,23 +475,22 @@ function renderCards(pageRows) {
 
 function renderRows() {
   const rows = getFilteredRows();
-  const { totalPages, pageRows } = getVisibleRows(rows);
 
   state.filteredRows = rows;
   refs.tableBody.innerHTML = "";
   if (refs.cardList) refs.cardList.innerHTML = "";
-  updatePager(totalPages);
+  updatePager();
 
   if (rows.length === 0) {
     refs.statusText.textContent = t("statusEmpty");
     return;
   }
 
-  refs.statusText.textContent = `${t("statusLoaded", { count: rows.length })} ${t("pageRowsText", { count: pageRows.length })}`;
+  refs.statusText.textContent = `${t("statusLoaded", { count: state.totalRows })} ${t("pageRowsText", { count: rows.length })}`;
 
   const fragment = document.createDocumentFragment();
 
-  for (const row of pageRows) {
+  for (const row of rows) {
     const tr = document.createElement("tr");
     if (isForthcomingRow(row)) tr.classList.add("is-forthcoming");
 
@@ -456,7 +518,7 @@ function renderRows() {
   }
 
   refs.tableBody.appendChild(fragment);
-  renderCards(pageRows);
+  renderCards(rows);
 }
 
 function applyLanguage() {
@@ -469,6 +531,14 @@ function applyLanguage() {
   refs.exportXlsxBtn.textContent = t("exportXlsx");
   refs.prevPageBtn.textContent = t("prev");
   refs.nextPageBtn.textContent = t("next");
+  if (refs.prevPageBtnBottom) refs.prevPageBtnBottom.textContent = t("prev");
+  if (refs.nextPageBtnBottom) refs.nextPageBtnBottom.textContent = t("next");
+
+  if (refs.themeToggleBtn) {
+    const label = state.theme === "dark" ? t("themeSwitchToLight") : t("themeSwitchToDark");
+    refs.themeToggleBtn.setAttribute("aria-label", label);
+    refs.themeToggleBtn.setAttribute("title", label);
+  }
 
   if (refs.modalHeading) refs.modalHeading.textContent = t("modalTitle");
   if (refs.modalCloseBtn) refs.modalCloseBtn.textContent = t("modalClose");
@@ -565,13 +635,56 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
-async function loadSnapshot(forceRefresh = false) {
+async function readJsonIfPossible(res) {
+  const raw = await res.text();
+  const parsed = safeParseJSON(raw);
+  if (!parsed || !Array.isArray(parsed.items)) return null;
+  return parsed;
+}
+
+function paginateClientPayload(payload, targetPage, pageSize) {
+  const allItems = Array.isArray(payload.items) ? payload.items : [];
+  const total = allItems.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(targetPage, 1), totalPages);
+  const start = (safePage - 1) * pageSize;
+  const end = start + pageSize;
+
+  return {
+    ...payload,
+    total,
+    page: safePage,
+    pageSize,
+    totalPages,
+    items: allItems.slice(start, end),
+    limits: {
+      ...(payload.limits && typeof payload.limits === "object" ? payload.limits : {}),
+      pageSize,
+      totalPages,
+    },
+  };
+}
+
+function buildEndpointUrl(endpoint, targetPage, forceRefresh) {
+  if (endpoint !== "/api/calls") return endpoint;
+
+  const params = new URLSearchParams({
+    page: String(targetPage),
+    pageSize: String(state.pageSize || PAGE_SIZE),
+  });
+  if (forceRefresh) params.set("refresh", "1");
+  return `${endpoint}?${params.toString()}`;
+}
+
+async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1) {
   refs.statusText.textContent = t("statusLoading");
 
   const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-  let endpoints = isLocal ? ["/data/calls.json", "/api/calls"] : ["/api/calls", "/data/calls.json"];
+  let endpoints = isLocal
+    ? ["/data/calls.json", "/api/calls"]
+    : ["/api/calls", "/data/calls.json"];
+
   if (forceRefresh) {
-    // On refresh, always try the live API first even in local dev.
     endpoints = ["/api/calls", "/data/calls.json"];
   }
 
@@ -580,14 +693,26 @@ async function loadSnapshot(forceRefresh = false) {
     let responseSource = "";
 
     for (const endpoint of endpoints) {
-      const url = forceRefresh && endpoint === "/api/calls" ? `${endpoint}?refresh=1` : endpoint;
-      const res = await fetchWithTimeout(url, forceRefresh ? { cache: "no-store" } : {});
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data && Array.isArray(data.items)) {
-        payload = data;
+      try {
+        const url = buildEndpointUrl(endpoint, targetPage, forceRefresh);
+        const reqOptions = {
+          headers: {
+            Accept: "application/json",
+          },
+        };
+        if (forceRefresh) reqOptions.cache = "no-store";
+
+        const res = await fetchWithTimeout(url, reqOptions);
+        if (!res.ok) continue;
+
+        const data = await readJsonIfPossible(res);
+        if (!data) continue;
+
+        payload = endpoint === "/data/calls.json" ? paginateClientPayload(data, targetPage, state.pageSize || PAGE_SIZE) : data;
         responseSource = res.headers.get("x-data-source") || endpoint;
         break;
+      } catch {
+        // try next endpoint
       }
     }
 
@@ -595,7 +720,7 @@ async function loadSnapshot(forceRefresh = false) {
       throw new Error("No valid data source available");
     }
 
-    applyPayload(payload, responseSource);
+    applyPayload(payload, responseSource, targetPage);
     saveLocalCache(payload);
   } catch (error) {
     if (state.rows.length > 0) {
@@ -680,24 +805,40 @@ refs.langSelect.addEventListener("change", (event) => {
 refs.searchInput.addEventListener("input", () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    state.page = 1;
     renderRows();
   }, 120);
 });
 
-refs.refreshBtn.addEventListener("click", () => loadSnapshot(true));
+refs.refreshBtn.addEventListener("click", () => loadSnapshot(true, state.page));
 refs.exportCsvBtn.addEventListener("click", exportCsv);
 refs.exportXlsxBtn.addEventListener("click", exportXlsx);
+if (refs.themeToggleBtn) {
+  refs.themeToggleBtn.addEventListener("click", toggleTheme);
+}
 refs.prevPageBtn.addEventListener("click", () => {
-  state.page -= 1;
-  renderRows();
+  if (state.page <= 1) return;
+  loadSnapshot(false, state.page - 1);
 });
 refs.nextPageBtn.addEventListener("click", () => {
-  state.page += 1;
-  renderRows();
+  if (state.page >= state.totalPages) return;
+  loadSnapshot(false, state.page + 1);
 });
+if (refs.prevPageBtnBottom) {
+  refs.prevPageBtnBottom.addEventListener("click", () => {
+    if (state.page <= 1) return;
+    loadSnapshot(false, state.page - 1);
+  });
+}
+if (refs.nextPageBtnBottom) {
+  refs.nextPageBtnBottom.addEventListener("click", () => {
+    if (state.page >= state.totalPages) return;
+    loadSnapshot(false, state.page + 1);
+  });
+}
 
 (function init() {
+  applyTheme(resolveSavedTheme());
+
   const savedLang = localStorage.getItem("eu-dashboard-lang");
   if (savedLang && I18N[savedLang]) {
     state.lang = savedLang;
@@ -709,8 +850,8 @@ refs.nextPageBtn.addEventListener("click", () => {
 
   const localPayload = loadLocalCache();
   if (localPayload && Array.isArray(localPayload.items)) {
-    applyPayload(localPayload, "local-cache");
+    applyPayload(localPayload, "local-cache", Number(localPayload.page || 1));
   }
 
-  loadSnapshot(true);
+  loadSnapshot(true, Number(localPayload?.page || 1));
 })();
