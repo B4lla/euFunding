@@ -20,6 +20,7 @@ const STATUS_COLUMN = "Status";
 const DESCRIPTION_PREVIEW_LENGTH = 220;
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 const SNAPSHOT_URL = `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}data/calls.json`;
+const SNAPSHOT_URL_CANDIDATES = Array.from(new Set([SNAPSHOT_URL, "/data/calls.json"]));
 
 const CACHE_KEY = "eu-calls-cache-v6";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -342,6 +343,31 @@ function safeParseJSON(raw) {
   }
 }
 
+function storageGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function storageRemove(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore storage failures
+  }
+}
+
 function readCookie(name) {
   const parts = String(document.cookie || "").split(";");
   for (const part of parts) {
@@ -353,7 +379,7 @@ function readCookie(name) {
 
 function saveThemePreference(theme) {
   try {
-    localStorage.setItem(THEME_KEY, theme);
+    storageSet(THEME_KEY, theme);
   } catch {
     // best effort only
   }
@@ -361,7 +387,7 @@ function saveThemePreference(theme) {
 }
 
 function resolveSavedTheme() {
-  const local = localStorage.getItem(THEME_KEY);
+  const local = storageGet(THEME_KEY);
   if (local === "dark" || local === "light") return local;
 
   const cookieTheme = readCookie("eu_dashboard_theme");
@@ -393,11 +419,18 @@ function saveLocalCache(payload) {
     cachedAt: Date.now(),
     payload,
   };
-  localStorage.setItem(CACHE_KEY, JSON.stringify(cachePayload));
+  const serialized = JSON.stringify(cachePayload);
+  if (serialized.length > 1_500_000) {
+    storageRemove(CACHE_KEY);
+    return false;
+  }
+
+  storageRemove(CACHE_KEY);
+  return storageSet(CACHE_KEY, serialized);
 }
 
 function loadLocalCache() {
-  const raw = localStorage.getItem(CACHE_KEY);
+  const raw = storageGet(CACHE_KEY);
   if (!raw) return null;
 
   const parsed = safeParseJSON(raw);
@@ -1345,6 +1378,26 @@ function buildEndpointUrl(endpoint, targetPage, forceRefresh) {
   return `${endpoint}?${params.toString()}`;
 }
 
+async function fetchSnapshotPayload(forceRefresh = false) {
+  for (const endpoint of SNAPSHOT_URL_CANDIDATES) {
+    try {
+      const reqOptions = { headers: { Accept: "application/json" } };
+      if (forceRefresh) reqOptions.cache = "no-store";
+      const res = await fetchWithTimeout(endpoint, reqOptions);
+      if (!res.ok) continue;
+      const data = await readJsonIfPossible(res);
+      if (!data || !Array.isArray(data.items)) continue;
+      return {
+        payload: data,
+        responseSource: res.headers.get("x-data-source") || endpoint,
+      };
+    } catch {
+      // try next snapshot URL
+    }
+  }
+  return null;
+}
+
 async function fetchAllApiRows(forceRefresh = false) {
   const query = refs.searchInput.value.trim();
   const firstUrl = buildEndpointUrl("/api/calls", 1, forceRefresh);
@@ -1379,40 +1432,31 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
   const scrollSnapshot = preservePosition ? captureScrollSnapshot() : null;
   refs.statusText.textContent = t("statusLoading");
 
-  const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-  let endpoints = isLocal
-    ? [SNAPSHOT_URL, "/api/calls"]
-    : ["/api/calls", SNAPSHOT_URL];
-
-  if (forceRefresh) {
-    endpoints = ["/api/calls", SNAPSHOT_URL];
-  }
-
   try {
     let payload = null;
     let responseSource = "";
 
-    for (const endpoint of endpoints) {
-      try {
-        if (endpoint === SNAPSHOT_URL) {
-          const reqOptions = { headers: { Accept: "application/json" } };
-          if (forceRefresh) reqOptions.cache = "no-store";
-          const res = await fetchWithTimeout(endpoint, reqOptions);
-          if (!res.ok) continue;
-          const data = await readJsonIfPossible(res);
-          if (!data) continue;
-          payload = data;
-          responseSource = res.headers.get("x-data-source") || endpoint;
-          break;
-        }
+    if (forceRefresh) {
+      const liveData = await fetchAllApiRows(true).catch(() => null);
+      if (liveData && Array.isArray(liveData.items) && liveData.items.length) {
+        payload = liveData;
+        responseSource = "/api/calls";
+      }
+    }
 
-        const data = await fetchAllApiRows(forceRefresh);
-        if (!data) continue;
-        payload = data;
-        responseSource = endpoint;
-        break;
-      } catch {
-        // try next endpoint
+    if (!payload) {
+      const snapshotData = await fetchSnapshotPayload(forceRefresh);
+      if (snapshotData) {
+        payload = snapshotData.payload;
+        responseSource = snapshotData.responseSource;
+      }
+    }
+
+    if (!payload) {
+      const liveData = await fetchAllApiRows(forceRefresh).catch(() => null);
+      if (liveData && Array.isArray(liveData.items) && liveData.items.length) {
+        payload = liveData;
+        responseSource = "/api/calls";
       }
     }
 
@@ -1421,12 +1465,23 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
     }
 
     applyPayload(payload, responseSource, targetPage);
-    saveLocalCache(payload);
+    const cacheSaved = saveLocalCache(payload);
+    if (cacheSaved === false) {
+      refs.statusText.textContent = `${refs.statusText.textContent} Cache disabled for large dataset.`;
+    }
   } catch (error) {
-    if (state.rows.length > 0) {
+    const cachedPayload = loadLocalCache();
+    if (cachedPayload && Array.isArray(cachedPayload.items) && cachedPayload.items.length) {
+      applyPayload(cachedPayload, "local-cache", targetPage);
       refs.statusText.textContent = `${t("statusError")} ${error.message}. Showing cached data.`;
       return;
     }
+
+    if (state.rows.length > 0) {
+      refs.statusText.textContent = `${t("statusError")} ${error.message}. Showing current data.`;
+      return;
+    }
+
     refs.statusText.textContent = `${t("statusError")} ${error.message}`;
   } finally {
     if (scrollSnapshot) {
@@ -1590,7 +1645,7 @@ async function exportXlsx() {
 
 refs.langSelect.addEventListener("change", (event) => {
   state.lang = event.target.value;
-  localStorage.setItem("eu-dashboard-lang", state.lang);
+  storageSet("eu-dashboard-lang", state.lang);
   applyLanguage();
 });
 
@@ -1649,7 +1704,7 @@ if (refs.nextPageBtnBottom) {
 
   applyTheme(resolveSavedTheme());
 
-  const savedLang = localStorage.getItem("eu-dashboard-lang");
+  const savedLang = storageGet("eu-dashboard-lang");
   if (savedLang && I18N[savedLang]) {
     state.lang = savedLang;
     refs.langSelect.value = savedLang;
