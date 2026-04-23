@@ -55,6 +55,11 @@ const I18N = {
     next: "Next",
     readMore: "Read more",
     filterPlaceholder: "Filter...",
+    filtersShow: "Show filters",
+    filtersHide: "Hide filters",
+    filtersTitle: "Column filters",
+    clearFilters: "Clear filters",
+    activeFilters: "{count} active",
     modalTitle: "Call details",
     modalClose: "Close",
     modalTopicCode: "Topic code",
@@ -92,6 +97,11 @@ const I18N = {
     next: "Urmator",
     readMore: "Citeste mai mult",
     filterPlaceholder: "Filtreaza...",
+    filtersShow: "Arata filtrele",
+    filtersHide: "Ascunde filtrele",
+    filtersTitle: "Filtre pe coloane",
+    clearFilters: "Reseteaza filtrele",
+    activeFilters: "{count} active",
     modalTitle: "Detalii apel",
     modalClose: "Inchide",
     modalTopicCode: "Cod topic",
@@ -127,6 +137,7 @@ const state = {
   selectedRows: new Map(),
   activeDescriptionRow: null,
   remoteQuery: "",
+  filtersOpen: false,
   columnFilters: Object.create(null),
   filterMetadata: Object.create(null),
 };
@@ -142,6 +153,10 @@ const refs = {
   clearSelectedBtn: document.getElementById("clearSelectedBtn"),
   exportCsvBtn: document.getElementById("exportCsvBtn"),
   exportXlsxBtn: document.getElementById("exportXlsxBtn"),
+  filtersToggleBtn: document.getElementById("filtersToggleBtn"),
+  filtersPanel: document.getElementById("filtersPanel"),
+  filtersGrid: document.getElementById("filtersGrid"),
+  clearFiltersBtn: document.getElementById("clearFiltersBtn"),
   themeToggleBtn: document.getElementById("themeToggleBtn"),
   tableWrap: document.querySelector(".table-wrap"),
   tableHeadRow: document.getElementById("tableHeadRow"),
@@ -880,7 +895,7 @@ function renderRows() {
 
   const fragment = document.createDocumentFragment();
 
-  for (const row of rows) {
+  for (const row of pageRows) {
     const tr = document.createElement("tr");
     if (isForthcomingRow(row)) tr.classList.add("is-forthcoming");
     if (isRowSelected(row)) tr.classList.add("is-selected");
@@ -976,167 +991,238 @@ function applyLanguage() {
     label.textContent = col;
     th.appendChild(label);
 
-    const filterState = state.columnFilters[col];
-    const meta = getColumnMetadata(col);
-    const filterWrap = document.createElement("div");
-    filterWrap.className = "filter-control-wrap";
-
-    if (filterState.kind === "text") {
-      const input = document.createElement("input");
-      input.type = "search";
-      input.className = "column-filter-input";
-      input.placeholder = t("filterPlaceholder");
-      input.value = filterState.value || "";
-      input.spellcheck = false;
-      input.setAttribute("list", meta.options.length > 0 && meta.options.length <= 120 ? `list-${col}` : "");
-      input.addEventListener("input", () => {
-        state.columnFilters[col].value = input.value;
-        state.page = 1;
-        renderRows();
-      });
-      filterWrap.appendChild(input);
-
-      if (meta.options.length > 0 && meta.options.length <= 120) {
-        const datalist = document.createElement("datalist");
-        datalist.id = `list-${col}`;
-        for (const optionValue of meta.options) {
-          const option = document.createElement("option");
-          option.value = optionValue;
-          datalist.appendChild(option);
-        }
-        filterWrap.appendChild(datalist);
-      }
-    } else if (filterState.kind === "select") {
-      const select = document.createElement("select");
-      select.className = "column-filter-input column-filter-select";
-      const allOption = document.createElement("option");
-      allOption.value = "";
-      allOption.textContent = t("filterPlaceholder");
-      select.appendChild(allOption);
-      for (const optionValue of meta.options) {
-        const option = document.createElement("option");
-        option.value = optionValue;
-        option.textContent = optionValue;
-        select.appendChild(option);
-      }
-      if (meta.hasNA) {
-        const option = document.createElement("option");
-        option.value = "__NA__";
-        option.textContent = "N/A";
-        select.appendChild(option);
-      }
-      select.value = filterState.value || "";
-      select.addEventListener("change", () => {
-        state.columnFilters[col].value = select.value;
-        state.page = 1;
-        renderRows();
-      });
-      filterWrap.appendChild(select);
-    } else if (filterState.kind === "date") {
-      const input = document.createElement("input");
-      input.type = "date";
-      input.className = "column-filter-input column-filter-date";
-      if (meta.dateMin) input.min = meta.dateMin;
-      if (meta.dateMax) input.max = meta.dateMax;
-      input.value = filterState.value || "";
-      input.addEventListener("input", () => {
-        state.columnFilters[col].value = input.value;
-        state.page = 1;
-        renderRows();
-      });
-      filterWrap.appendChild(input);
-      if (meta.hasNA) {
-        const labelNA = document.createElement("label");
-        labelNA.className = "filter-na-toggle";
-        const check = document.createElement("input");
-        check.type = "checkbox";
-        check.checked = Boolean(filterState.includeNA);
-        check.addEventListener("change", () => {
-          state.columnFilters[col].includeNA = check.checked;
-          state.page = 1;
-          renderRows();
-        });
-        labelNA.appendChild(check);
-        labelNA.appendChild(document.createTextNode(" N/A"));
-        filterWrap.appendChild(labelNA);
-      }
-    } else if (filterState.kind === "range") {
-      const minValue = meta.min ?? 0;
-      const maxValue = meta.max ?? 0;
-      if (filterState.min === null) filterState.min = minValue;
-      if (filterState.max === null) filterState.max = maxValue;
-
-      const values = document.createElement("div");
-      values.className = "range-filter-values";
-      const minLabel = document.createElement("span");
-      const maxLabel = document.createElement("span");
-      const syncLabels = () => {
-        minLabel.textContent = `Min: ${Math.round(state.columnFilters[col].min ?? minValue).toLocaleString()}`;
-        maxLabel.textContent = `Max: ${Math.round(state.columnFilters[col].max ?? maxValue).toLocaleString()}`;
-      };
-      values.append(minLabel, maxLabel);
-      filterWrap.appendChild(values);
-
-      const minRange = document.createElement("input");
-      minRange.type = "range";
-      minRange.className = "column-filter-range";
-      minRange.min = String(minValue);
-      minRange.max = String(maxValue);
-      minRange.step = "1";
-      minRange.value = String(filterState.min ?? minValue);
-
-      const maxRange = document.createElement("input");
-      maxRange.type = "range";
-      maxRange.className = "column-filter-range";
-      maxRange.min = String(minValue);
-      maxRange.max = String(maxValue);
-      maxRange.step = "1";
-      maxRange.value = String(filterState.max ?? maxValue);
-
-      minRange.addEventListener("input", () => {
-        const nextMin = Number(minRange.value);
-        const currentMax = Number(maxRange.value);
-        state.columnFilters[col].min = Math.min(nextMin, currentMax);
-        minRange.value = String(state.columnFilters[col].min);
-        state.page = 1;
-        syncLabels();
-        renderRows();
-      });
-      maxRange.addEventListener("input", () => {
-        const nextMax = Number(maxRange.value);
-        const currentMin = Number(minRange.value);
-        state.columnFilters[col].max = Math.max(nextMax, currentMin);
-        maxRange.value = String(state.columnFilters[col].max);
-        state.page = 1;
-        syncLabels();
-        renderRows();
-      });
-      syncLabels();
-      filterWrap.append(minRange, maxRange);
-
-      if (meta.hasNA) {
-        const labelNA = document.createElement("label");
-        labelNA.className = "filter-na-toggle";
-        const check = document.createElement("input");
-        check.type = "checkbox";
-        check.checked = Boolean(filterState.includeNA);
-        check.addEventListener("change", () => {
-          state.columnFilters[col].includeNA = check.checked;
-          state.page = 1;
-          renderRows();
-        });
-        labelNA.appendChild(check);
-        labelNA.appendChild(document.createTextNode(" N/A"));
-        filterWrap.appendChild(labelNA);
-      }
-    }
-
-    th.appendChild(filterWrap);
     refs.tableHeadRow.appendChild(th);
   }
 
+  if (refs.clearFiltersBtn) refs.clearFiltersBtn.textContent = t("clearFilters");
+  const filterTitle = document.querySelector(".filters-panel-title");
+  if (filterTitle) filterTitle.textContent = t("filtersTitle");
+  renderFiltersPanel();
   updateSelectionControls();
   renderRows();
+}
+
+function countActiveColumnFilters() {
+  return COLUMN_ORDER.reduce((acc, col) => {
+    const filter = state.columnFilters[col];
+    if (!filter || filter.kind === "none") return acc;
+    if (filter.kind === "text" || filter.kind === "select") return acc + (String(filter.value || "").trim() ? 1 : 0);
+    if (filter.kind === "date") return acc + ((filter.value || filter.includeNA) ? 1 : 0);
+    if (filter.kind === "range") {
+      const meta = getColumnMetadata(col);
+      const active = Boolean(filter.includeNA)
+        || (filter.min !== null && filter.min !== meta.min)
+        || (filter.max !== null && filter.max !== meta.max);
+      return acc + (active ? 1 : 0);
+    }
+    return acc;
+  }, 0);
+}
+
+function clearAllColumnFilters() {
+  state.columnFilters = Object.fromEntries(COLUMN_ORDER.map((col) => [col, createDefaultFilterState(col)]));
+  state.page = 1;
+  applyLanguage();
+}
+
+function updateFiltersPanelVisibility() {
+  if (!refs.filtersPanel || !refs.filtersToggleBtn) return;
+  refs.filtersPanel.hidden = !state.filtersOpen;
+  refs.filtersToggleBtn.setAttribute("aria-expanded", String(state.filtersOpen));
+  const count = countActiveColumnFilters();
+  const label = `${state.filtersOpen ? t("filtersHide") : t("filtersShow")}${count ? ` (${t("activeFilters", { count })})` : ""}`;
+  refs.filtersToggleBtn.textContent = label;
+}
+
+function createColumnFilterControl(col) {
+  const filterState = state.columnFilters[col];
+  const meta = getColumnMetadata(col);
+  const card = document.createElement("section");
+  card.className = "filter-card";
+
+  const label = document.createElement("label");
+  label.className = "filter-card-label";
+  label.textContent = col;
+  card.appendChild(label);
+
+  const filterWrap = document.createElement("div");
+  filterWrap.className = "filter-control-wrap";
+
+  if (filterState.kind === "text") {
+    const input = document.createElement("input");
+    input.type = "search";
+    input.className = "column-filter-input";
+    input.placeholder = t("filterPlaceholder");
+    input.value = filterState.value || "";
+    input.spellcheck = false;
+    input.setAttribute("list", meta.options.length > 0 && meta.options.length <= 120 ? `list-${col}` : "");
+    input.addEventListener("input", () => {
+      state.columnFilters[col].value = input.value;
+      state.page = 1;
+      renderRows();
+      updateFiltersPanelVisibility();
+    });
+    filterWrap.appendChild(input);
+
+    if (meta.options.length > 0 && meta.options.length <= 120) {
+      const datalist = document.createElement("datalist");
+      datalist.id = `list-${col}`;
+      for (const optionValue of meta.options) {
+        const option = document.createElement("option");
+        option.value = optionValue;
+        datalist.appendChild(option);
+      }
+      filterWrap.appendChild(datalist);
+    }
+  } else if (filterState.kind === "select") {
+    const select = document.createElement("select");
+    select.className = "column-filter-input column-filter-select";
+    const allOption = document.createElement("option");
+    allOption.value = "";
+    allOption.textContent = t("filterPlaceholder");
+    select.appendChild(allOption);
+    for (const optionValue of meta.options) {
+      const option = document.createElement("option");
+      option.value = optionValue;
+      option.textContent = optionValue;
+      select.appendChild(option);
+    }
+    if (meta.hasNA) {
+      const option = document.createElement("option");
+      option.value = "__NA__";
+      option.textContent = "N/A";
+      select.appendChild(option);
+    }
+    select.value = filterState.value || "";
+    select.addEventListener("change", () => {
+      state.columnFilters[col].value = select.value;
+      state.page = 1;
+      renderRows();
+      updateFiltersPanelVisibility();
+    });
+    filterWrap.appendChild(select);
+  } else if (filterState.kind === "date") {
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "column-filter-input column-filter-date";
+    if (meta.dateMin) input.min = meta.dateMin;
+    if (meta.dateMax) input.max = meta.dateMax;
+    input.value = filterState.value || "";
+    input.addEventListener("input", () => {
+      state.columnFilters[col].value = input.value;
+      state.page = 1;
+      renderRows();
+      updateFiltersPanelVisibility();
+    });
+    filterWrap.appendChild(input);
+    if (meta.hasNA) {
+      const labelNA = document.createElement("label");
+      labelNA.className = "filter-na-toggle";
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = Boolean(filterState.includeNA);
+      check.addEventListener("change", () => {
+        state.columnFilters[col].includeNA = check.checked;
+        state.page = 1;
+        renderRows();
+        updateFiltersPanelVisibility();
+      });
+      labelNA.appendChild(check);
+      labelNA.appendChild(document.createTextNode(" N/A"));
+      filterWrap.appendChild(labelNA);
+    }
+  } else if (filterState.kind === "range") {
+    const minValue = meta.min ?? 0;
+    const maxValue = meta.max ?? 0;
+    if (filterState.min === null) filterState.min = minValue;
+    if (filterState.max === null) filterState.max = maxValue;
+
+    const values = document.createElement("div");
+    values.className = "range-filter-values";
+    const minLabel = document.createElement("span");
+    const maxLabel = document.createElement("span");
+    const syncLabels = () => {
+      minLabel.textContent = `Min: ${Math.round(state.columnFilters[col].min ?? minValue).toLocaleString()}`;
+      maxLabel.textContent = `Max: ${Math.round(state.columnFilters[col].max ?? maxValue).toLocaleString()}`;
+    };
+    values.append(minLabel, maxLabel);
+    filterWrap.appendChild(values);
+
+    const minRange = document.createElement("input");
+    minRange.type = "range";
+    minRange.className = "column-filter-range";
+    minRange.min = String(minValue);
+    minRange.max = String(maxValue);
+    minRange.step = "1";
+    minRange.value = String(filterState.min ?? minValue);
+
+    const maxRange = document.createElement("input");
+    maxRange.type = "range";
+    maxRange.className = "column-filter-range";
+    maxRange.min = String(minValue);
+    maxRange.max = String(maxValue);
+    maxRange.step = "1";
+    maxRange.value = String(filterState.max ?? maxValue);
+
+    minRange.addEventListener("input", () => {
+      const nextMin = Number(minRange.value);
+      const currentMax = Number(maxRange.value);
+      state.columnFilters[col].min = Math.min(nextMin, currentMax);
+      minRange.value = String(state.columnFilters[col].min);
+      state.page = 1;
+      syncLabels();
+      renderRows();
+      updateFiltersPanelVisibility();
+    });
+    maxRange.addEventListener("input", () => {
+      const nextMax = Number(maxRange.value);
+      const currentMin = Number(minRange.value);
+      state.columnFilters[col].max = Math.max(nextMax, currentMin);
+      maxRange.value = String(state.columnFilters[col].max);
+      state.page = 1;
+      syncLabels();
+      renderRows();
+      updateFiltersPanelVisibility();
+    });
+    syncLabels();
+    filterWrap.append(minRange, maxRange);
+
+    if (meta.hasNA) {
+      const labelNA = document.createElement("label");
+      labelNA.className = "filter-na-toggle";
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = Boolean(filterState.includeNA);
+      check.addEventListener("change", () => {
+        state.columnFilters[col].includeNA = check.checked;
+        state.page = 1;
+        renderRows();
+        updateFiltersPanelVisibility();
+      });
+      labelNA.appendChild(check);
+      labelNA.appendChild(document.createTextNode(" N/A"));
+      filterWrap.appendChild(labelNA);
+    }
+  } else {
+    const info = document.createElement("p");
+    info.className = "filter-card-empty";
+    info.textContent = "No filter";
+    filterWrap.appendChild(info);
+  }
+
+  card.appendChild(filterWrap);
+  return card;
+}
+
+function renderFiltersPanel() {
+  if (!refs.filtersGrid) return;
+  refs.filtersGrid.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  for (const col of COLUMN_ORDER) {
+    fragment.appendChild(createColumnFilterControl(col));
+  }
+  refs.filtersGrid.appendChild(fragment);
+  updateFiltersPanelVisibility();
 }
 
 function openDescriptionModal(row) {
@@ -1515,6 +1601,15 @@ refs.searchInput.addEventListener("input", () => {
   }, 180);
 });
 
+if (refs.filtersToggleBtn) {
+  refs.filtersToggleBtn.addEventListener("click", () => {
+    state.filtersOpen = !state.filtersOpen;
+    updateFiltersPanelVisibility();
+  });
+}
+if (refs.clearFiltersBtn) {
+  refs.clearFiltersBtn.addEventListener("click", clearAllColumnFilters);
+}
 refs.refreshBtn.addEventListener("click", () => loadSnapshot(true, state.page));
 if (refs.selectedOnlyBtn) {
   refs.selectedOnlyBtn.addEventListener("click", toggleSelectedOnly);
@@ -1568,5 +1663,5 @@ if (refs.nextPageBtnBottom) {
     applyPayload(localPayload, "local-cache", Number(localPayload.page || 1));
   }
 
-  loadSnapshot(true, Number(localPayload?.page || 1));
+  loadSnapshot(false, Number(localPayload?.page || 1));
 })();

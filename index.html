@@ -11,7 +11,7 @@
       <header class="topbar">
         <div class="brand-lockup">
           <div class="brand-logo-shell" aria-hidden="true">
-            <img class="brand-logo" src="/logo.png" alt="" />
+            <img class="brand-logo" src="/logo.jpg" alt="" />
           </div>
 
           <div class="brand-copy">
@@ -51,10 +51,21 @@
         />
 
         <button id="refreshBtn" class="btn btn-secondary" type="button">Refresh snapshot</button>
+        <button id="filtersToggleBtn" class="btn btn-secondary" type="button" aria-expanded="false" aria-controls="filtersPanel">Show filters</button>
         <button id="selectedOnlyBtn" class="btn btn-secondary" type="button">Show selected (0)</button>
         <button id="clearSelectedBtn" class="btn btn-secondary" type="button">Clear selected</button>
         <button id="exportCsvBtn" class="btn btn-primary" type="button">Export CSV</button>
         <button id="exportXlsxBtn" class="btn btn-primary" type="button">Export Excel</button>
+      </section>
+
+
+
+      <section id="filtersPanel" class="filters-panel" hidden aria-label="Column filters">
+        <div class="filters-panel-head">
+          <h2 class="filters-panel-title">Column filters</h2>
+          <button id="clearFiltersBtn" class="btn btn-secondary" type="button">Clear filters</button>
+        </div>
+        <div id="filtersGrid" class="filters-grid"></div>
       </section>
 
       <section class="meta">
