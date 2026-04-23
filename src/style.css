@@ -640,7 +640,7 @@ select:focus,
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1720px;
+  min-width: 1560px;
 }
 
 thead th {
@@ -731,11 +731,11 @@ thead th:nth-child(4) { min-width: 13rem; }
 thead th:nth-child(5) { min-width: 20rem; }
 thead th:nth-child(6) { min-width: 28rem; }
 thead th:nth-child(7) { min-width: 16rem; }
-thead th:nth-child(8) { min-width: 9rem; }
-thead th:nth-child(9) { min-width: 8rem; }
-thead th:nth-child(10) { min-width: 10rem; }
-thead th:nth-child(11) { min-width: 10rem; }
-thead th:nth-child(12) { min-width: 8rem; }
+thead th:nth-child(8) { min-width: 6.25rem; }
+thead th:nth-child(9) { min-width: 5.25rem; }
+thead th:nth-child(10) { min-width: 7.5rem; }
+thead th:nth-child(11) { min-width: 7.5rem; }
+thead th:nth-child(12) { min-width: 5rem; }
 
 tbody td {
   border-bottom: 1px solid var(--table-row-line);

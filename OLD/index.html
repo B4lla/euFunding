@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="EU calls dashboard 2021-2027 with CSV and Excel export" />
+    <title>EU Calls Dashboard</title>
+  </head>
+  <body>
+    <main class="container">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="labelPeriod">Funding period 2021-2027</p>
+          <h1 id="title">EU Calls for Proposals Dashboard</h1>
+        </div>
+
+        <div class="controls-inline">
+          <label for="langSelect" id="labelLanguage">Language</label>
+          <div class="control-actions">
+            <div class="lang-select-wrap">
+              <select id="langSelect" class="lang-select" aria-label="Language selector">
+                <option value="en">English</option>
+                <option value="ro">Romana</option>
+              </select>
+              <span class="lang-select-chevron" aria-hidden="true">▾</span>
+            </div>
+
+            <button id="themeToggleBtn" class="theme-switch" type="button" aria-label="Toggle color theme" title="Toggle color theme">
+              <span class="theme-switch-track" aria-hidden="true">
+                <span class="theme-switch-icon theme-switch-sun">☀</span>
+                <span class="theme-switch-icon theme-switch-moon">🌙</span>
+                <span class="theme-switch-thumb"></span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <input
+          id="searchInput"
+          type="search"
+          placeholder="Search by title, code, programme..."
+          aria-label="Search calls"
+        />
+
+        <button id="refreshBtn" class="btn btn-secondary" type="button">Refresh snapshot</button>
+        <button id="selectedOnlyBtn" class="btn btn-secondary" type="button">Show selected (0)</button>
+        <button id="clearSelectedBtn" class="btn btn-secondary" type="button">Clear selected</button>
+        <button id="exportCsvBtn" class="btn btn-primary" type="button">Export CSV</button>
+        <button id="exportXlsxBtn" class="btn btn-primary" type="button">Export Excel</button>
+      </section>
+
+      <section class="meta">
+        <p id="statusText">Loading data...</p>
+        <p id="updatedAt"></p>
+      </section>
+
+      <section class="pager" aria-label="Table pagination">
+        <button id="prevPageBtn" class="btn btn-secondary" type="button">Prev</button>
+        <span id="pageInfo">Page 1/1</span>
+        <button id="nextPageBtn" class="btn btn-secondary" type="button">Next</button>
+      </section>
+
+      <section class="table-wrap" aria-live="polite">
+        <table>
+          <thead>
+            <tr id="tableHeadRow"></tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </section>
+
+      <section class="pager pager-bottom" aria-label="Table pagination bottom">
+        <button id="prevPageBtnBottom" class="btn btn-secondary" type="button">Prev</button>
+        <span id="pageInfoBottom">Page 1/1</span>
+        <button id="nextPageBtnBottom" class="btn btn-secondary" type="button">Next</button>
+      </section>
+
+      <section class="cards-wrap" aria-live="polite">
+        <div id="cardList" class="cards-list"></div>
+      </section>
+    </main>
+
+    <dialog id="descModal" class="desc-modal" aria-labelledby="modalHeading">
+      <article class="modal-shell">
+        <header class="modal-head">
+          <h2 id="modalHeading">Call details</h2>
+          <button id="modalCloseBtn" class="btn btn-secondary" type="button" aria-label="Close">Close</button>
+        </header>
+
+        <section class="modal-meta" aria-label="Call metadata">
+          <p><strong id="modalTopicCodeLabel">Topic code</strong><span id="modalTopicCodeValue">N/A</span></p>
+          <p><strong id="modalTopicTitleLabel">Topic title</strong><span id="modalTopicTitleValue">N/A</span></p>
+          <p><strong id="modalDeadlineLabel">Deadline</strong><span id="modalDeadlineValue">N/A</span></p>
+          <p>
+            <strong id="modalCallLinkLabel">Call link</strong>
+            <span>
+              <a id="modalLinkValue" class="call-link" href="#" target="_blank" rel="noopener noreferrer">Open</a>
+            </span>
+          </p>
+        </section>
+
+        <section class="modal-body">
+          <h3 id="modalDescriptionLabel">Topic description</h3>
+          <p id="modalDescriptionValue">N/A</p>
+        </section>
+      </article>
+    </dialog>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

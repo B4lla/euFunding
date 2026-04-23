@@ -501,8 +501,7 @@ function applyPayload(payload, responseSource = "", requestedPage = 1) {
   state.generatedAt = payload.generatedAt || "";
   state.source = payload.source || responseSource || "";
 
-  const payloadPageSize = Number(payload.pageSize || payload.limits?.pageSize || state.pageSize || PAGE_SIZE);
-  state.pageSize = Number.isFinite(payloadPageSize) && payloadPageSize > 0 ? payloadPageSize : PAGE_SIZE;
+  state.pageSize = PAGE_SIZE;
 
   state.totalRows = state.rows.length;
   state.remoteQuery = "";
@@ -707,6 +706,7 @@ function hasActiveColumnFilters() {
     if (filter.kind === "date") return Boolean(filter.value) || Boolean(filter.includeNA);
     if (filter.kind === "range") {
       const meta = getColumnMetadata(col);
+      if (meta.min === null && meta.max === null) return Boolean(filter.includeNA);
       return Boolean(filter.includeNA)
         || (filter.min !== null && filter.min !== meta.min)
         || (filter.max !== null && filter.max !== meta.max);
@@ -742,6 +742,11 @@ function rowMatchesColumnFilter(row, col) {
   }
 
   if (filter.kind === "range") {
+    const meta = getColumnMetadata(col);
+    if (meta.min === null && meta.max === null) {
+      return isNA ? Boolean(filter.includeNA) : true;
+    }
+
     if (isNA) return Boolean(filter.includeNA);
     const numeric = parseBudgetValue(rawValue);
     if (numeric === null) return false;
@@ -1055,6 +1060,9 @@ function countActiveColumnFilters() {
     if (filter.kind === "date") return acc + ((filter.value || filter.includeNA) ? 1 : 0);
     if (filter.kind === "range") {
       const meta = getColumnMetadata(col);
+      if (meta.min === null && meta.max === null) {
+        return acc + (filter.includeNA ? 1 : 0);
+      }
       const active = Boolean(filter.includeNA)
         || (filter.min !== null && filter.min !== meta.min)
         || (filter.max !== null && filter.max !== meta.max);
@@ -1179,8 +1187,40 @@ function createColumnFilterControl(col) {
   } else if (filterState.kind === "range") {
     const minValue = meta.min ?? 0;
     const maxValue = meta.max ?? 0;
-    if (filterState.min === null) filterState.min = minValue;
-    if (filterState.max === null) filterState.max = maxValue;
+
+    if (meta.min === null || meta.max === null) {
+      const info = document.createElement("p");
+      info.className = "filter-card-empty";
+      info.textContent = "No numeric data";
+      filterWrap.appendChild(info);
+
+      if (meta.hasNA) {
+        const labelNA = document.createElement("label");
+        labelNA.className = "filter-na-toggle";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = Boolean(filterState.includeNA);
+        check.addEventListener("change", () => {
+          state.columnFilters[col].includeNA = check.checked;
+          state.page = 1;
+          renderRows();
+          updateFiltersPanelVisibility();
+        });
+        labelNA.appendChild(check);
+        labelNA.appendChild(document.createTextNode(" N/A"));
+        filterWrap.appendChild(labelNA);
+      }
+
+      card.appendChild(filterWrap);
+      return card;
+    }
+
+    if (filterState.min === null || filterState.min < minValue || filterState.min > maxValue) {
+      filterState.min = minValue;
+    }
+    if (filterState.max === null || filterState.max < minValue || filterState.max > maxValue) {
+      filterState.max = maxValue;
+    }
 
     const values = document.createElement("div");
     values.className = "range-filter-values";
