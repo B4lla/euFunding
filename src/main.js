@@ -113,6 +113,7 @@ const I18N = {
 const state = {
   lang: "en",
   rows: [],
+  allRows: [],
   filteredRows: [],
   generatedAt: "",
   source: "",
@@ -127,6 +128,7 @@ const state = {
   activeDescriptionRow: null,
   remoteQuery: "",
   columnFilters: Object.create(null),
+  filterMetadata: Object.create(null),
 };
 
 const refs = {
@@ -182,10 +184,35 @@ function normalizeFilterValue(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function createDefaultFilterState(column) {
+  switch (column) {
+    case STATUS_COLUMN:
+    case "Stages":
+    case "Programme":
+    case "Type of Action":
+      return { kind: "select", value: "" };
+    case "Topic code":
+      return { kind: "text", value: "" };
+    case "Topic title":
+    case DESCRIPTION_COLUMN:
+      return { kind: "text", value: "" };
+    case "Opening date":
+    case "Deadline":
+      return { kind: "date", value: "", includeNA: false };
+    case BUDGET_COLUMN:
+      return { kind: "range", min: null, max: null, includeNA: false };
+    case "CAll link":
+      return { kind: "none" };
+    default:
+      return { kind: "text", value: "" };
+  }
+}
+
 function ensureColumnFilters() {
   for (const col of COLUMN_ORDER) {
-    if (typeof state.columnFilters[col] !== "string") {
-      state.columnFilters[col] = "";
+    const current = state.columnFilters[col];
+    if (!current || typeof current !== "object") {
+      state.columnFilters[col] = createDefaultFilterState(col);
     }
   }
 }
@@ -404,7 +431,9 @@ function restoreScrollSnapshot(snapshot) {
 }
 
 function applyPayload(payload, responseSource = "", requestedPage = 1) {
-  state.rows = Array.isArray(payload.items) ? payload.items.map(normalizeClientRow) : [];
+  state.allRows = Array.isArray(payload.items) ? payload.items.map(normalizeClientRow) : [];
+  state.rows = state.allRows;
+  state.filterMetadata = Object.create(null);
   for (const row of state.rows) {
     if (state.selectedIds.has(row._rowKey)) {
       state.selectedRows.set(row._rowKey, row);
@@ -416,15 +445,11 @@ function applyPayload(payload, responseSource = "", requestedPage = 1) {
   const payloadPageSize = Number(payload.pageSize || payload.limits?.pageSize || state.pageSize || PAGE_SIZE);
   state.pageSize = Number.isFinite(payloadPageSize) && payloadPageSize > 0 ? payloadPageSize : PAGE_SIZE;
 
-  const payloadTotal = Number(payload.total);
-  state.totalRows = Number.isFinite(payloadTotal) && payloadTotal >= 0 ? payloadTotal : state.rows.length;
-  state.remoteQuery = String(payload.query || "").trim().toLowerCase();
+  state.totalRows = state.rows.length;
+  state.remoteQuery = "";
+  state.totalPages = Math.max(1, Math.ceil(Math.max(state.totalRows, 1) / state.pageSize));
 
-  const payloadTotalPages = Number(payload.totalPages || Math.ceil(Math.max(state.totalRows, 1) / state.pageSize));
-  state.totalPages = Math.max(1, Number.isFinite(payloadTotalPages) ? payloadTotalPages : 1);
-
-  const payloadPage = Number(payload.page || requestedPage || 1);
-  const safePage = Number.isFinite(payloadPage) ? payloadPage : 1;
+  const safePage = Number.isFinite(Number(requestedPage)) ? Number(requestedPage) : 1;
   state.page = Math.min(Math.max(safePage, 1), state.totalPages);
 
   updateMetaText();
@@ -539,42 +564,163 @@ function createDescriptionCell(row) {
   return wrapper;
 }
 
+function parseDateValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "N/A") return null;
+
+  const direct = new Date(raw);
+  if (!Number.isNaN(direct.getTime())) {
+    return direct.toISOString().slice(0, 10);
+  }
+
+  const match = raw.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (!match) return null;
+  const [, day, monthName, year] = match;
+  const months = {
+    january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+    july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+  };
+  const monthIndex = months[monthName.toLowerCase()];
+  if (monthIndex === undefined) return null;
+  const date = new Date(Date.UTC(Number(year), monthIndex, Number(day)));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function parseBudgetValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "N/A") return null;
+  const normalized = raw.replace(/[^\d.,-]/g, "").replace(/,/g, "");
+  const num = Number.parseFloat(normalized);
+  return Number.isFinite(num) ? num : null;
+}
+
+function getColumnMetadata(col) {
+  if (state.filterMetadata[col]) return state.filterMetadata[col];
+
+  const rows = state.allRows.length ? state.allRows : state.rows;
+  const values = [];
+  const optionSet = new Set();
+  const numericValues = [];
+  const dateValues = [];
+  let hasNA = false;
+
+  for (const row of rows) {
+    const rawValue = col === DESCRIPTION_COLUMN ? getFullDescription(row) : sanitize(row[col]);
+    values.push(rawValue);
+    if (rawValue === "N/A") {
+      hasNA = true;
+    } else {
+      optionSet.add(rawValue);
+    }
+
+    if (col === BUDGET_COLUMN) {
+      const numeric = parseBudgetValue(rawValue);
+      if (numeric !== null) numericValues.push(numeric);
+    }
+
+    if (col === "Opening date" || col === "Deadline") {
+      const date = parseDateValue(rawValue);
+      if (date) dateValues.push(date);
+    }
+  }
+
+  const options = Array.from(optionSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  dateValues.sort();
+  const meta = {
+    hasNA,
+    options,
+    min: numericValues.length ? Math.min(...numericValues) : null,
+    max: numericValues.length ? Math.max(...numericValues) : null,
+    dateMin: dateValues.length ? dateValues[0] : null,
+    dateMax: dateValues.length ? dateValues[dateValues.length - 1] : null,
+  };
+
+  state.filterMetadata[col] = meta;
+  return meta;
+}
+
+function hasActiveColumnFilters() {
+  return COLUMN_ORDER.some((col) => {
+    const filter = state.columnFilters[col];
+    if (!filter || filter.kind === "none") return false;
+    if (filter.kind === "text" || filter.kind === "select") return Boolean(String(filter.value || "").trim());
+    if (filter.kind === "date") return Boolean(filter.value) || Boolean(filter.includeNA);
+    if (filter.kind === "range") {
+      const meta = getColumnMetadata(col);
+      return Boolean(filter.includeNA)
+        || (filter.min !== null && filter.min !== meta.min)
+        || (filter.max !== null && filter.max !== meta.max);
+    }
+    return false;
+  });
+}
+
+function rowMatchesColumnFilter(row, col) {
+  const filter = state.columnFilters[col];
+  if (!filter || filter.kind === "none") return true;
+
+  const rawValue = col === DESCRIPTION_COLUMN ? getFullDescription(row) : sanitize(row[col]);
+  const normalizedValue = normalizeFilterValue(rawValue);
+  const isNA = rawValue === "N/A";
+
+  if (filter.kind === "text") {
+    const expected = normalizeFilterValue(filter.value);
+    return !expected || normalizedValue.includes(expected);
+  }
+
+  if (filter.kind === "select") {
+    if (!filter.value) return true;
+    if (filter.value === "__NA__") return isNA;
+    return rawValue === filter.value;
+  }
+
+  if (filter.kind === "date") {
+    if (isNA) return Boolean(filter.includeNA);
+    if (!filter.value) return true;
+    const rowDate = parseDateValue(rawValue);
+    return Boolean(rowDate) && rowDate === filter.value;
+  }
+
+  if (filter.kind === "range") {
+    if (isNA) return Boolean(filter.includeNA);
+    const numeric = parseBudgetValue(rawValue);
+    if (numeric === null) return false;
+    if (filter.min !== null && numeric < filter.min) return false;
+    if (filter.max !== null && numeric > filter.max) return false;
+    return true;
+  }
+
+  return true;
+}
+
 function getFilteredRows() {
-  const sourceRows = state.showSelectedOnly ? getSelectedRows() : state.rows;
+  const sourceRows = state.showSelectedOnly ? getSelectedRows() : state.allRows;
   const query = normalizeFilterValue(refs.searchInput.value);
-  const hasColumnFilters = COLUMN_ORDER.some((col) => normalizeFilterValue(state.columnFilters[col]));
+  const hasColumnFilters = hasActiveColumnFilters();
 
   if (!query && !hasColumnFilters) return sourceRows;
 
   let rows = sourceRows;
 
   if (query) {
-    const queryAlreadyAppliedRemotely = !state.showSelectedOnly && state.remoteQuery && state.remoteQuery === query;
-    if (!queryAlreadyAppliedRemotely) {
-      rows = rows.filter((row) =>
-        COLUMN_ORDER.some((col) => normalizeFilterValue(row[col]).includes(query)),
-      );
-    }
+    rows = rows.filter((row) =>
+      COLUMN_ORDER.some((col) => {
+        const value = col === DESCRIPTION_COLUMN ? getFullDescription(row) : row[col];
+        return normalizeFilterValue(value).includes(query);
+      }),
+    );
   }
 
   if (hasColumnFilters) {
-    rows = rows.filter((row) =>
-      COLUMN_ORDER.every((col) => {
-        const columnFilter = normalizeFilterValue(state.columnFilters[col]);
-        if (!columnFilter) return true;
-
-        const rowValue = col === DESCRIPTION_COLUMN
-          ? normalizeFilterValue(getFullDescription(row))
-          : normalizeFilterValue(row[col]);
-        return rowValue.includes(columnFilter);
-      }),
-    );
+    rows = rows.filter((row) => COLUMN_ORDER.every((col) => rowMatchesColumnFilter(row, col)));
   }
 
   return rows;
 }
 
 function updatePager() {
+  state.totalPages = Math.max(1, Math.ceil(Math.max(state.filteredRows.length, 1) / state.pageSize));
+  if (state.page > state.totalPages) state.page = state.totalPages;
   const pageLabel = state.showSelectedOnly
     ? t("selectedModeStatus", { count: state.selectedRows.size })
     : t("pageText", { page: state.page, total: state.totalPages });
@@ -711,9 +857,13 @@ function renderRows() {
   const rows = getFilteredRows();
 
   state.filteredRows = rows;
+  updatePager();
+  const start = state.showSelectedOnly ? 0 : (state.page - 1) * state.pageSize;
+  const end = state.showSelectedOnly ? rows.length : start + state.pageSize;
+  const pageRows = rows.slice(start, end);
+
   refs.tableBody.innerHTML = "";
   if (refs.cardList) refs.cardList.innerHTML = "";
-  updatePager();
 
   if (rows.length === 0) {
     refs.statusText.textContent = t("statusEmpty");
@@ -764,7 +914,7 @@ function renderRows() {
   }
 
   refs.tableBody.appendChild(fragment);
-  renderCards(rows);
+  renderCards(pageRows);
   updateSelectAllCheckbox();
   updateSelectionControls();
 }
@@ -826,19 +976,162 @@ function applyLanguage() {
     label.textContent = col;
     th.appendChild(label);
 
-    const filterInput = document.createElement("input");
-    filterInput.type = "search";
-    filterInput.className = "column-filter-input";
-    filterInput.placeholder = t("filterPlaceholder");
-    filterInput.value = state.columnFilters[col] || "";
-    filterInput.spellcheck = false;
-    filterInput.setAttribute("aria-label", `${col} ${t("filterPlaceholder")}`);
-    filterInput.addEventListener("input", () => {
-      state.columnFilters[col] = filterInput.value;
-      renderRows();
-    });
-    th.appendChild(filterInput);
+    const filterState = state.columnFilters[col];
+    const meta = getColumnMetadata(col);
+    const filterWrap = document.createElement("div");
+    filterWrap.className = "filter-control-wrap";
 
+    if (filterState.kind === "text") {
+      const input = document.createElement("input");
+      input.type = "search";
+      input.className = "column-filter-input";
+      input.placeholder = t("filterPlaceholder");
+      input.value = filterState.value || "";
+      input.spellcheck = false;
+      input.setAttribute("list", meta.options.length > 0 && meta.options.length <= 120 ? `list-${col}` : "");
+      input.addEventListener("input", () => {
+        state.columnFilters[col].value = input.value;
+        state.page = 1;
+        renderRows();
+      });
+      filterWrap.appendChild(input);
+
+      if (meta.options.length > 0 && meta.options.length <= 120) {
+        const datalist = document.createElement("datalist");
+        datalist.id = `list-${col}`;
+        for (const optionValue of meta.options) {
+          const option = document.createElement("option");
+          option.value = optionValue;
+          datalist.appendChild(option);
+        }
+        filterWrap.appendChild(datalist);
+      }
+    } else if (filterState.kind === "select") {
+      const select = document.createElement("select");
+      select.className = "column-filter-input column-filter-select";
+      const allOption = document.createElement("option");
+      allOption.value = "";
+      allOption.textContent = t("filterPlaceholder");
+      select.appendChild(allOption);
+      for (const optionValue of meta.options) {
+        const option = document.createElement("option");
+        option.value = optionValue;
+        option.textContent = optionValue;
+        select.appendChild(option);
+      }
+      if (meta.hasNA) {
+        const option = document.createElement("option");
+        option.value = "__NA__";
+        option.textContent = "N/A";
+        select.appendChild(option);
+      }
+      select.value = filterState.value || "";
+      select.addEventListener("change", () => {
+        state.columnFilters[col].value = select.value;
+        state.page = 1;
+        renderRows();
+      });
+      filterWrap.appendChild(select);
+    } else if (filterState.kind === "date") {
+      const input = document.createElement("input");
+      input.type = "date";
+      input.className = "column-filter-input column-filter-date";
+      if (meta.dateMin) input.min = meta.dateMin;
+      if (meta.dateMax) input.max = meta.dateMax;
+      input.value = filterState.value || "";
+      input.addEventListener("input", () => {
+        state.columnFilters[col].value = input.value;
+        state.page = 1;
+        renderRows();
+      });
+      filterWrap.appendChild(input);
+      if (meta.hasNA) {
+        const labelNA = document.createElement("label");
+        labelNA.className = "filter-na-toggle";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = Boolean(filterState.includeNA);
+        check.addEventListener("change", () => {
+          state.columnFilters[col].includeNA = check.checked;
+          state.page = 1;
+          renderRows();
+        });
+        labelNA.appendChild(check);
+        labelNA.appendChild(document.createTextNode(" N/A"));
+        filterWrap.appendChild(labelNA);
+      }
+    } else if (filterState.kind === "range") {
+      const minValue = meta.min ?? 0;
+      const maxValue = meta.max ?? 0;
+      if (filterState.min === null) filterState.min = minValue;
+      if (filterState.max === null) filterState.max = maxValue;
+
+      const values = document.createElement("div");
+      values.className = "range-filter-values";
+      const minLabel = document.createElement("span");
+      const maxLabel = document.createElement("span");
+      const syncLabels = () => {
+        minLabel.textContent = `Min: ${Math.round(state.columnFilters[col].min ?? minValue).toLocaleString()}`;
+        maxLabel.textContent = `Max: ${Math.round(state.columnFilters[col].max ?? maxValue).toLocaleString()}`;
+      };
+      values.append(minLabel, maxLabel);
+      filterWrap.appendChild(values);
+
+      const minRange = document.createElement("input");
+      minRange.type = "range";
+      minRange.className = "column-filter-range";
+      minRange.min = String(minValue);
+      minRange.max = String(maxValue);
+      minRange.step = "1";
+      minRange.value = String(filterState.min ?? minValue);
+
+      const maxRange = document.createElement("input");
+      maxRange.type = "range";
+      maxRange.className = "column-filter-range";
+      maxRange.min = String(minValue);
+      maxRange.max = String(maxValue);
+      maxRange.step = "1";
+      maxRange.value = String(filterState.max ?? maxValue);
+
+      minRange.addEventListener("input", () => {
+        const nextMin = Number(minRange.value);
+        const currentMax = Number(maxRange.value);
+        state.columnFilters[col].min = Math.min(nextMin, currentMax);
+        minRange.value = String(state.columnFilters[col].min);
+        state.page = 1;
+        syncLabels();
+        renderRows();
+      });
+      maxRange.addEventListener("input", () => {
+        const nextMax = Number(maxRange.value);
+        const currentMin = Number(minRange.value);
+        state.columnFilters[col].max = Math.max(nextMax, currentMin);
+        maxRange.value = String(state.columnFilters[col].max);
+        state.page = 1;
+        syncLabels();
+        renderRows();
+      });
+      syncLabels();
+      filterWrap.append(minRange, maxRange);
+
+      if (meta.hasNA) {
+        const labelNA = document.createElement("label");
+        labelNA.className = "filter-na-toggle";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = Boolean(filterState.includeNA);
+        check.addEventListener("change", () => {
+          state.columnFilters[col].includeNA = check.checked;
+          state.page = 1;
+          renderRows();
+        });
+        labelNA.appendChild(check);
+        labelNA.appendChild(document.createTextNode(" N/A"));
+        filterWrap.appendChild(labelNA);
+      }
+    }
+
+    th.appendChild(filterWrap);
     refs.tableHeadRow.appendChild(th);
   }
 
@@ -965,6 +1258,35 @@ function buildEndpointUrl(endpoint, targetPage, forceRefresh) {
   return `${endpoint}?${params.toString()}`;
 }
 
+async function fetchAllApiRows(forceRefresh = false) {
+  const query = refs.searchInput.value.trim();
+  const firstUrl = buildEndpointUrl("/api/calls", 1, forceRefresh);
+  const firstRes = await fetchWithTimeout(firstUrl, { headers: { Accept: "application/json" }, cache: forceRefresh ? "no-store" : "default" });
+  if (!firstRes.ok) return null;
+  const firstData = await readJsonIfPossible(firstRes);
+  if (!firstData || !Array.isArray(firstData.items)) return null;
+
+  const items = [...firstData.items];
+  const totalPages = Math.max(1, Number(firstData.totalPages || 1));
+  const cappedPages = Math.min(totalPages, 200);
+  for (let page = 2; page <= cappedPages; page += 1) {
+    const pageUrl = `/api/calls?page=${page}&pageSize=${EXPORT_FETCH_PAGE_SIZE}${query ? `&q=${encodeURIComponent(query)}` : ""}${forceRefresh ? "&refresh=1" : ""}`;
+    const pageRes = await fetchWithTimeout(pageUrl, { headers: { Accept: "application/json" }, cache: forceRefresh ? "no-store" : "default" });
+    if (!pageRes.ok) break;
+    const pageData = await readJsonIfPossible(pageRes);
+    if (!pageData || !Array.isArray(pageData.items)) break;
+    items.push(...pageData.items);
+  }
+
+  return {
+    ...firstData,
+    page: 1,
+    total: items.length,
+    totalPages: Math.max(1, Math.ceil(items.length / (state.pageSize || PAGE_SIZE))),
+    items,
+  };
+}
+
 async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, options = {}) {
   const preservePosition = options && options.preservePosition === true;
   const scrollSnapshot = preservePosition ? captureScrollSnapshot() : null;
@@ -985,22 +1307,22 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
 
     for (const endpoint of endpoints) {
       try {
-        const url = buildEndpointUrl(endpoint, targetPage, forceRefresh);
-        const reqOptions = {
-          headers: {
-            Accept: "application/json",
-          },
-        };
-        if (forceRefresh) reqOptions.cache = "no-store";
+        if (endpoint === "/data/calls.json") {
+          const reqOptions = { headers: { Accept: "application/json" } };
+          if (forceRefresh) reqOptions.cache = "no-store";
+          const res = await fetchWithTimeout(endpoint, reqOptions);
+          if (!res.ok) continue;
+          const data = await readJsonIfPossible(res);
+          if (!data) continue;
+          payload = data;
+          responseSource = res.headers.get("x-data-source") || endpoint;
+          break;
+        }
 
-        const res = await fetchWithTimeout(url, reqOptions);
-        if (!res.ok) continue;
-
-        const data = await readJsonIfPossible(res);
+        const data = await fetchAllApiRows(forceRefresh);
         if (!data) continue;
-
-        payload = endpoint === "/data/calls.json" ? paginateClientPayload(data, targetPage, state.pageSize || PAGE_SIZE) : data;
-        responseSource = res.headers.get("x-data-source") || endpoint;
+        payload = data;
+        responseSource = endpoint;
         break;
       } catch {
         // try next endpoint
@@ -1188,12 +1510,9 @@ refs.langSelect.addEventListener("change", (event) => {
 refs.searchInput.addEventListener("input", () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    if (state.showSelectedOnly) {
-      renderRows();
-      return;
-    }
-    loadSnapshot(false, 1);
-  }, 260);
+    state.page = 1;
+    renderRows();
+  }, 180);
 });
 
 refs.refreshBtn.addEventListener("click", () => loadSnapshot(true, state.page));

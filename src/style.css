@@ -210,7 +210,8 @@ body::after {
 .container {
   position: relative;
   z-index: 1;
-  max-width: 1340px;
+  width: min(98vw, 1880px);
+  max-width: 1880px;
   margin: 0 auto;
   padding: 1.2rem;
   animation: rise-in 340ms ease both;
@@ -443,7 +444,7 @@ select:focus,
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) repeat(5, auto);
+  grid-template-columns: minmax(320px, 1.2fr) repeat(5, auto);
   gap: 0.6rem;
   margin: 0.9rem 0;
   padding: 0.75rem;
@@ -583,7 +584,7 @@ select:focus,
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1160px;
+  min-width: 1720px;
 }
 
 thead th {
@@ -605,9 +606,14 @@ thead th {
   margin-bottom: 0.38rem;
 }
 
+.filter-control-wrap {
+  display: grid;
+  gap: 0.38rem;
+}
+
 .column-filter-input {
   width: 100%;
-  min-width: 7.4rem;
+  min-width: 8.6rem;
   border: 1px solid var(--field-border);
   border-radius: 8px;
   background: var(--field-bg);
@@ -628,6 +634,53 @@ thead th {
   outline: 2px solid color-mix(in srgb, var(--brand) 42%, transparent);
   outline-offset: 1px;
 }
+
+.column-filter-select,
+.column-filter-date {
+  appearance: auto;
+}
+
+.range-filter-values {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.column-filter-range {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--brand);
+}
+
+.filter-na-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.filter-na-toggle input {
+  margin: 0;
+}
+
+thead th:nth-child(2) { min-width: 11rem; }
+thead th:nth-child(3) { min-width: 13rem; }
+thead th:nth-child(4) { min-width: 14rem; }
+thead th:nth-child(5) { min-width: 22rem; }
+thead th:nth-child(6) { min-width: 30rem; }
+thead th:nth-child(7) { min-width: 18rem; }
+thead th:nth-child(8) { min-width: 10rem; }
+thead th:nth-child(9) { min-width: 9rem; }
+thead th:nth-child(10) { min-width: 11rem; }
+thead th:nth-child(11) { min-width: 11rem; }
+thead th:nth-child(12) { min-width: 8rem; }
 
 tbody td {
   border-bottom: 1px solid var(--table-row-line);
