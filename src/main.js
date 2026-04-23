@@ -18,8 +18,9 @@ const DESCRIPTION_COLUMN = "Topic description";
 const FULL_DESCRIPTION_FIELD = "Topic description full";
 const BUDGET_COLUMN = "Budget (EUR) - Year : 2026";
 const DESCRIPTION_PREVIEW_LENGTH = 220;
+const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 
-const CACHE_KEY = "eu-calls-cache-v4";
+const CACHE_KEY = "eu-calls-cache-v5";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const PAGE_SIZE = 25;
 const EXPORT_FETCH_PAGE_SIZE = 100;
@@ -119,6 +120,7 @@ const state = {
   selectedIds: new Set(),
   selectedRows: new Map(),
   activeDescriptionRow: null,
+  remoteQuery: "",
 };
 
 const refs = {
@@ -169,6 +171,30 @@ function sanitize(value) {
   return String(value);
 }
 
+function buildPublicTopicUrl(topicCode) {
+  const code = String(topicCode || "").trim();
+  if (!code) return "";
+  return `${PUBLIC_CALL_BASE_URL}${encodeURIComponent(code)}`;
+}
+
+function normalizeCallLink(topicCode, candidateUrl) {
+  const fallback = buildPublicTopicUrl(topicCode);
+  const raw = String(candidateUrl || "").trim();
+  if (!raw) return fallback || "N/A";
+
+  const dataTopicMatch = raw.match(/\/opportunities\/data\/topicDetails\/([^/?#]+)/i);
+  if (dataTopicMatch) {
+    const slug = decodeURIComponent(dataTopicMatch[1]).replace(/\.json$/i, "");
+    return buildPublicTopicUrl(topicCode || slug) || "N/A";
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    return raw.replace(/\.json(?=($|[?#]))/i, "");
+  }
+
+  return fallback || "N/A";
+}
+
 function buildRowKey(row) {
   const code = sanitize(row["Topic code"]);
   const link = sanitize(row["CAll link"]);
@@ -179,6 +205,7 @@ function buildRowKey(row) {
 function normalizeClientRow(row) {
   const normalized = row && typeof row === "object" ? { ...row } : {};
   normalized[DESCRIPTION_COLUMN] = sanitize(normalized[DESCRIPTION_COLUMN]);
+  normalized["CAll link"] = normalizeCallLink(normalized["Topic code"], normalized["CAll link"]);
   if (!String(normalized[FULL_DESCRIPTION_FIELD] || "").trim()) {
     normalized[FULL_DESCRIPTION_FIELD] = normalized[DESCRIPTION_COLUMN];
   }
@@ -336,6 +363,7 @@ function applyPayload(payload, responseSource = "", requestedPage = 1) {
 
   const payloadTotal = Number(payload.total);
   state.totalRows = Number.isFinite(payloadTotal) && payloadTotal >= 0 ? payloadTotal : state.rows.length;
+  state.remoteQuery = String(payload.query || "").trim().toLowerCase();
 
   const payloadTotalPages = Number(payload.totalPages || Math.ceil(Math.max(state.totalRows, 1) / state.pageSize));
   state.totalPages = Math.max(1, Number.isFinite(payloadTotalPages) ? payloadTotalPages : 1);
@@ -460,6 +488,10 @@ function getFilteredRows() {
   const sourceRows = state.showSelectedOnly ? getSelectedRows() : state.rows;
   const query = refs.searchInput.value.trim().toLowerCase();
   if (!query) return sourceRows;
+
+  if (!state.showSelectedOnly && state.remoteQuery && state.remoteQuery === query) {
+    return sourceRows;
+  }
 
   return sourceRows.filter((row) =>
     COLUMN_ORDER.some((col) => String(row[col] || "").toLowerCase().includes(query)),
@@ -831,6 +863,8 @@ function buildEndpointUrl(endpoint, targetPage, forceRefresh) {
     page: String(targetPage),
     pageSize: String(state.pageSize || PAGE_SIZE),
   });
+  const query = refs.searchInput.value.trim();
+  if (query) params.set("q", query);
   if (forceRefresh) params.set("refresh", "1");
   return `${endpoint}?${params.toString()}`;
 }
@@ -1034,8 +1068,12 @@ refs.langSelect.addEventListener("change", (event) => {
 refs.searchInput.addEventListener("input", () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    renderRows();
-  }, 120);
+    if (state.showSelectedOnly) {
+      renderRows();
+      return;
+    }
+    loadSnapshot(false, 1);
+  }, 260);
 });
 
 refs.refreshBtn.addEventListener("click", () => loadSnapshot(true, state.page));

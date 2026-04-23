@@ -5,11 +5,28 @@ const CONFIG = {
   SEARCH_URL: "https://api.tech.ec.europa.eu/search-api/prod/rest/search",
   API_KEY: "SEDIA",
   SEARCH_TEXT: "***",
+  MAX_SEARCH_LENGTH: 120,
   DEFAULT_PAGE_SIZE: 25,
   MAX_PAGE_SIZE: 100,
   REQUEST_TIMEOUT_MS: 6000,
   CACHE_TTL_MS: 12 * 60 * 60 * 1000,
 };
+const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
+const SEARCH_COLUMNS = [
+  "Programme",
+  "Type of Action",
+  "Topic code",
+  "Topic title",
+  "Topic description",
+  "Topic description full",
+  "Budget (EUR) - Year : 2026",
+  "Stages",
+  "Opening date",
+  "Deadline",
+  "Contributions",
+  "Indicative number of grants",
+  "CAll link",
+];
 const PROGRAMME_PERIOD = "2021 - 2027";
 const STATUS_FORTHCOMING = "31094501";
 const STATUS_OPEN = "31094502";
@@ -41,8 +58,9 @@ module.exports = async function handler(req, res) {
   }
 
   const pagination = parsePagination(req.query || {});
+  const searchText = parseSearchText(req.query || {});
   const wantsRefresh = isTruthyFlag(req.query && req.query.refresh);
-  const cacheKey = buildCacheKey(pagination.page, pagination.pageSize);
+  const cacheKey = buildCacheKey(pagination.page, pagination.pageSize, searchText);
 
   if (!wantsRefresh) {
     const cached = readMemoryCache(cacheKey);
@@ -52,13 +70,13 @@ module.exports = async function handler(req, res) {
 
     const snapshot = await readSnapshotFile();
     if (snapshot && snapshot.items.length > 0) {
-      const payload = paginateSnapshotPayload(snapshot, pagination.page, pagination.pageSize, snapshot.source || "Snapshot JSON");
+      const payload = paginateSnapshotPayload(snapshot, pagination.page, pagination.pageSize, snapshot.source || "Snapshot JSON", searchText);
       setMemoryCache(cacheKey, payload);
       return writePayload(req, res, payload, "snapshot");
     }
   }
 
-  const live = await fetchLivePage(pagination.page, pagination.pageSize);
+  const live = await fetchLivePage(pagination.page, pagination.pageSize, searchText);
   if (live) {
     setMemoryCache(cacheKey, live);
     return writePayload(req, res, live, "live");
@@ -67,7 +85,7 @@ module.exports = async function handler(req, res) {
   const snapshot = await readSnapshotFile();
 
   if (snapshot) {
-    const payload = paginateSnapshotPayload(snapshot, pagination.page, pagination.pageSize, snapshot.source || "Snapshot JSON");
+    const payload = paginateSnapshotPayload(snapshot, pagination.page, pagination.pageSize, snapshot.source || "Snapshot JSON", searchText);
     setMemoryCache(cacheKey, payload);
     return writePayload(req, res, payload, "snapshot-fallback");
   }
@@ -92,8 +110,16 @@ function parsePagination(query) {
   return { page, pageSize };
 }
 
-function buildCacheKey(page, pageSize) {
-  return `${page}:${pageSize}`;
+function parseSearchText(query) {
+  return normalizeSearchText(query.q || query.query || "");
+}
+
+function normalizeSearchText(value) {
+  return String(value ?? "").trim().slice(0, CONFIG.MAX_SEARCH_LENGTH);
+}
+
+function buildCacheKey(page, pageSize, searchText) {
+  return `${page}:${pageSize}:${String(searchText || "").toLowerCase()}`;
 }
 
 function readMemoryCache(cacheKey) {
@@ -135,9 +161,20 @@ async function readSnapshotFile() {
   return null;
 }
 
-function paginateSnapshotPayload(snapshot, page, pageSize, source) {
+function rowMatchesSearch(row, searchText) {
+  if (!searchText) return true;
+
+  const query = String(searchText).toLowerCase();
+  for (const col of SEARCH_COLUMNS) {
+    if (String(row[col] || "").toLowerCase().includes(query)) return true;
+  }
+  return false;
+}
+
+function paginateSnapshotPayload(snapshot, page, pageSize, source, searchText = "") {
   const allItems = Array.isArray(snapshot.items) ? snapshot.items : [];
-  const total = allItems.length;
+  const filteredItems = searchText ? allItems.filter((row) => rowMatchesSearch(row, searchText)) : allItems;
+  const total = filteredItems.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(page, 1), totalPages);
   const start = (safePage - 1) * pageSize;
@@ -146,6 +183,7 @@ function paginateSnapshotPayload(snapshot, page, pageSize, source) {
   return {
     generatedAt: snapshot.generatedAt || new Date().toISOString(),
     source,
+    query: searchText,
     total,
     page: safePage,
     pageSize,
@@ -153,17 +191,17 @@ function paginateSnapshotPayload(snapshot, page, pageSize, source) {
     limits: {
       ...(snapshot.limits && typeof snapshot.limits === "object" ? snapshot.limits : {}),
       pageSize,
-      searchText: CONFIG.SEARCH_TEXT,
+      searchText: searchText || CONFIG.SEARCH_TEXT,
       programmePeriod: PROGRAMME_PERIOD,
       apiCallsUsed: 0,
       totalPages,
     },
-    items: allItems.slice(start, end),
+    items: filteredItems.slice(start, end),
   };
 }
 
-async function fetchLivePage(pageNumber, pageSize) {
-  const result = await fetchPage(pageNumber, pageSize, CONFIG.REQUEST_TIMEOUT_MS);
+async function fetchLivePage(pageNumber, pageSize, searchText = "") {
+  const result = await fetchPage(pageNumber, pageSize, CONFIG.REQUEST_TIMEOUT_MS, searchText);
   if (!result) return null;
 
   const rows = [];
@@ -176,13 +214,14 @@ async function fetchLivePage(pageNumber, pageSize) {
   return {
     generatedAt: new Date().toISOString(),
     source: "EU Funding & Tenders Search API (SEDIA)",
+    query: searchText,
     total: result.totalResults,
     page: pageNumber,
     pageSize,
     totalPages: Math.max(1, Math.ceil(result.totalResults / pageSize)),
     limits: {
       pageSize,
-      searchText: CONFIG.SEARCH_TEXT,
+      searchText: searchText || CONFIG.SEARCH_TEXT,
       programmePeriod: PROGRAMME_PERIOD,
       apiCallsUsed: 1,
       totalPages: Math.max(1, Math.ceil(result.totalResults / pageSize)),
@@ -203,10 +242,10 @@ function buildSearchQuery() {
   };
 }
 
-async function fetchPage(pageNumber, pageSize, timeoutMs) {
+async function fetchPage(pageNumber, pageSize, timeoutMs, searchText = "") {
   const params = new URLSearchParams({
     apiKey: CONFIG.API_KEY,
-    text: CONFIG.SEARCH_TEXT,
+    text: searchText || CONFIG.SEARCH_TEXT,
     pageSize: String(pageSize),
     pageNumber: String(pageNumber),
   });
@@ -367,9 +406,24 @@ function mapActionType(raw) {
 }
 
 function buildCallLink(topicCode, candidateUrl) {
-  if (String(candidateUrl || "").startsWith("http")) return String(candidateUrl);
-  if (!topicCode) return "N/A";
-  return `https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/${encodeURIComponent(topicCode)}`;
+  const code = String(topicCode || "").trim();
+  const fallback = code ? `${PUBLIC_CALL_BASE_URL}${encodeURIComponent(code)}` : "N/A";
+  const raw = String(candidateUrl || "").trim();
+
+  if (!raw) return fallback;
+
+  const dataTopicMatch = raw.match(/\/opportunities\/data\/topicDetails\/([^/?#]+)/i);
+  if (dataTopicMatch) {
+    const slug = decodeURIComponent(dataTopicMatch[1]).replace(/\.json$/i, "");
+    const target = code || slug;
+    return target ? `${PUBLIC_CALL_BASE_URL}${encodeURIComponent(target)}` : "N/A";
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    return raw.replace(/\.json(?=($|[?#]))/i, "");
+  }
+
+  return fallback;
 }
 
 function resolveStatus(metadata, actionStatusRaw) {

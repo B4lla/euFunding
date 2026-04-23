@@ -10,6 +10,7 @@ const REQUEST_TIMEOUT_MS = 4000;
 const PROGRAMME_PERIOD = "2021 - 2027";
 const STATUS_FORTHCOMING = "31094501";
 const STATUS_OPEN = "31094502";
+const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 
 const PROGRAMME_CODE_MAP = {
   "43108390": "Horizon Europe",
@@ -130,9 +131,23 @@ function mapActionType(raw) {
 }
 
 function buildCallLink(topicCode, candidateUrl) {
-  if (String(candidateUrl || "").startsWith("http")) return String(candidateUrl);
-  if (!topicCode) return "N/A";
-  return `https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/${encodeURIComponent(topicCode)}`;
+  const code = String(topicCode || "").trim();
+  const fallback = code ? `${PUBLIC_CALL_BASE_URL}${encodeURIComponent(code)}` : "N/A";
+  const raw = String(candidateUrl || "").trim();
+  if (!raw) return fallback;
+
+  const dataTopicMatch = raw.match(/\/opportunities\/data\/topicDetails\/([^/?#]+)/i);
+  if (dataTopicMatch) {
+    const slug = decodeURIComponent(dataTopicMatch[1]).replace(/\.json$/i, "");
+    const target = code || slug;
+    return target ? `${PUBLIC_CALL_BASE_URL}${encodeURIComponent(target)}` : "N/A";
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    return raw.replace(/\.json(?=($|[?#]))/i, "");
+  }
+
+  return fallback;
 }
 
 function parseNumeric(value) {
