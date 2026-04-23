@@ -26,7 +26,7 @@ const CACHE_KEY = "eu-calls-cache-v6";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const PAGE_SIZE = 25;
 const EXPORT_FETCH_PAGE_SIZE = 100;
-const REQUEST_TIMEOUT_MS = 10000;
+const REQUEST_TIMEOUT_MS = 20000;
 const THEME_KEY = "eu-dashboard-theme";
 const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -414,29 +414,12 @@ function toggleTheme() {
   saveThemePreference(nextTheme);
 }
 
-function saveLocalCache(payload) {
-  const cachePayload = {
-    cachedAt: Date.now(),
-    payload,
-  };
-  const serialized = JSON.stringify(cachePayload);
-  if (serialized.length > 1_500_000) {
-    storageRemove(CACHE_KEY);
-    return false;
-  }
-
-  storageRemove(CACHE_KEY);
-  return storageSet(CACHE_KEY, serialized);
+function saveLocalCache() {
+  return false;
 }
 
 function loadLocalCache() {
-  const raw = storageGet(CACHE_KEY);
-  if (!raw) return null;
-
-  const parsed = safeParseJSON(raw);
-  if (!parsed || !parsed.payload) return null;
-  if (Date.now() - Number(parsed.cachedAt || 0) > CACHE_MAX_AGE_MS) return null;
-  return parsed.payload;
+  return null;
 }
 
 function updateMetaText() {
@@ -1335,10 +1318,11 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
-async function readJsonIfPossible(res) {
+async function readJsonIfPossible(res, requireItems = true) {
   const raw = await res.text();
   const parsed = safeParseJSON(raw);
-  if (!parsed || !Array.isArray(parsed.items)) return null;
+  if (!parsed) return null;
+  if (requireItems && !Array.isArray(parsed.items)) return null;
   return parsed;
 }
 
@@ -1378,7 +1362,66 @@ function buildEndpointUrl(endpoint, targetPage, forceRefresh) {
   return `${endpoint}?${params.toString()}`;
 }
 
+async function fetchSnapshotManifest(forceRefresh = false) {
+  for (const endpoint of SNAPSHOT_MANIFEST_CANDIDATES) {
+    try {
+      const reqOptions = { headers: { Accept: "application/json" } };
+      if (forceRefresh) reqOptions.cache = "no-store";
+      const res = await fetchWithTimeout(endpoint, reqOptions);
+      if (!res.ok) continue;
+      const data = await readJsonIfPossible(res, false);
+      if (!data || !Array.isArray(data.parts)) continue;
+      return data;
+    } catch {
+      // try next manifest URL
+    }
+  }
+  return null;
+}
+
+function buildChunkUrl(partPath) {
+  const clean = String(partPath || "").replace(/^\/+/, "");
+  return `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}${clean}`;
+}
+
+async function fetchChunkPayloadsFromManifest(manifest, forceRefresh = false) {
+  const reqOptions = { headers: { Accept: "application/json" } };
+  if (forceRefresh) reqOptions.cache = "no-store";
+
+  const responses = await Promise.all(manifest.parts.map(async (part) => {
+    const partUrl = buildChunkUrl(part.path || part.file || part.url);
+    const res = await fetchWithTimeout(partUrl, reqOptions);
+    if (!res.ok) throw new Error(`Chunk request failed: ${partUrl}`);
+    const data = await readJsonIfPossible(res, false);
+    if (!data || !Array.isArray(data.items)) throw new Error(`Invalid chunk payload: ${partUrl}`);
+    return data.items;
+  }));
+
+  return {
+    generatedAt: manifest.generatedAt || "",
+    source: manifest.source || "snapshot-chunks",
+    total: Number(manifest.total || 0),
+    limits: manifest.limits || { pageSize: state.pageSize || PAGE_SIZE },
+    items: responses.flat(),
+  };
+}
+
 async function fetchSnapshotPayload(forceRefresh = false) {
+  const manifest = await fetchSnapshotManifest(forceRefresh);
+  if (manifest) {
+    try {
+      const payload = await fetchChunkPayloadsFromManifest(manifest, forceRefresh);
+      if (payload && Array.isArray(payload.items) && payload.items.length) {
+        return {
+          payload,
+          responseSource: manifest.source || "snapshot-chunks",
+        };
+      }
+    } catch {
+      // fall back to single snapshot
+    }
+  }
+
   for (const endpoint of SNAPSHOT_URL_CANDIDATES) {
     try {
       const reqOptions = { headers: { Accept: "application/json" } };
@@ -1465,10 +1508,6 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
     }
 
     applyPayload(payload, responseSource, targetPage);
-    const cacheSaved = saveLocalCache(payload);
-    if (cacheSaved === false) {
-      refs.statusText.textContent = `${refs.statusText.textContent} Cache disabled for large dataset.`;
-    }
   } catch (error) {
     const cachedPayload = loadLocalCache();
     if (cachedPayload && Array.isArray(cachedPayload.items) && cachedPayload.items.length) {
@@ -1566,17 +1605,9 @@ async function getRowsForExport() {
   const fromApi = await fetchAllRowsForExport();
   if (fromApi && fromApi.length > 0) return fromApi;
 
-  const fallback = await fetchWithTimeout(SNAPSHOT_URL, {
-    headers: {
-      Accept: "application/json",
-    },
-    cache: "no-store",
-  });
-  if (fallback && fallback.ok) {
-    const data = await readJsonIfPossible(fallback);
-    if (data && Array.isArray(data.items)) {
-      return dedupeRows(data.items);
-    }
+  const snapshotData = await fetchSnapshotPayload(true).catch(() => null);
+  if (snapshotData && snapshotData.payload && Array.isArray(snapshotData.payload.items)) {
+    return dedupeRows(snapshotData.payload.items);
   }
 
   return dedupeRows(state.filteredRows);
