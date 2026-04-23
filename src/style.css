@@ -241,6 +241,52 @@ body::after {
   background: linear-gradient(90deg, var(--topbar-accent-a) 0%, var(--topbar-accent-b) 46%, var(--topbar-accent-c) 100%);
 }
 
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.brand-copy {
+  min-width: 0;
+}
+
+.brand-logo-shell {
+  position: relative;
+  flex-shrink: 0;
+  width: 4.6rem;
+  height: 4.6rem;
+  border-radius: 1.15rem;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--glass-stroke);
+  background:
+    linear-gradient(155deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.08)),
+    var(--surface-soft);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    0 12px 22px rgba(17, 37, 52, 0.16);
+}
+
+.brand-logo-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(130deg, transparent 0%, rgba(255, 255, 255, 0.35) 52%, transparent 88%);
+  opacity: 0.7;
+}
+
+.brand-logo {
+  width: 74%;
+  height: 74%;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 4px 7px rgba(17, 37, 52, 0.18));
+}
+
 .eyebrow {
   margin: 0;
   color: var(--brand);
@@ -554,6 +600,35 @@ thead th {
   padding: 0.78rem;
 }
 
+.column-heading-label {
+  display: block;
+  margin-bottom: 0.38rem;
+}
+
+.column-filter-input {
+  width: 100%;
+  min-width: 7.4rem;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  background: var(--field-bg);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  padding: 0.34rem 0.45rem;
+}
+
+.column-filter-input::placeholder {
+  color: var(--muted);
+  opacity: 0.88;
+}
+
+.column-filter-input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brand) 42%, transparent);
+  outline-offset: 1px;
+}
+
 tbody td {
   border-bottom: 1px solid var(--table-row-line);
   font-size: 0.88rem;
@@ -863,6 +938,11 @@ a.call-link {
     align-items: flex-start;
   }
 
+  .brand-logo-shell {
+    width: 4.2rem;
+    height: 4.2rem;
+  }
+
   .toolbar {
     grid-template-columns: 1fr 1fr 1fr;
   }
@@ -905,6 +985,16 @@ a.call-link {
 }
 
 @media (max-width: 480px) {
+  .brand-lockup {
+    align-items: flex-start;
+  }
+
+  .brand-logo-shell {
+    width: 3.7rem;
+    height: 3.7rem;
+    border-radius: 0.95rem;
+  }
+
   .controls-inline {
     width: 100%;
     justify-content: flex-start;

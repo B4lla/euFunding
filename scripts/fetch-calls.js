@@ -402,8 +402,6 @@ function extractActionMetadata(metadata) {
       openingDate: "",
       deadline: "",
       stages: "N/A",
-      contributions: "N/A",
-      indicativeGrants: "N/A",
     };
   }
 
@@ -412,16 +410,12 @@ function extractActionMetadata(metadata) {
   const openingDate = first.openingDate || first.plannedOpeningDate || first.startDate || first.publicationDate || "";
   const deadline = (Array.isArray(first.deadlineDates) && first.deadlineDates[0]) || first.deadlineDate || first.submissionDeadline || "";
   const stages = parsed.map((x) => x.stage || x.stageLabel || x.stageCode || "").filter(Boolean);
-  const contributions = formatMoney(first.minContribution, first.maxContribution);
-  const indicativeGrants = String(first.indicativeNumberOfGrants || first.numberOfGrants || first.grantsNumber || "") || "N/A";
 
   return {
     status,
     openingDate,
     deadline,
     stages: stages.length ? stages.join(" | ") : String(parsed.length),
-    contributions,
-    indicativeGrants,
   };
 }
 
@@ -485,8 +479,6 @@ function normalize(item) {
     Stages: nonEmptyOrNA(stripHtml(pickMeta(md, "stages")) || action.stages),
     "Opening date": nonEmptyOrNA(openingIso),
     Deadline: nonEmptyOrNA(deadlineIso),
-    Contributions: nonEmptyOrNA(action.contributions),
-    "Indicative number of grants": nonEmptyOrNA(action.indicativeGrants),
     "CAll link": nonEmptyOrNA(buildCallLink(topicCode, firstNonEmpty(stripHtml(pickMeta(md, "url")), item.url))),
   };
 }

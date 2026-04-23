@@ -7,16 +7,16 @@ const COLUMN_ORDER = [
   "Topic title",
   "Topic description",
   "Budget (EUR) - Year : 2026",
+  "Status",
   "Stages",
   "Opening date",
   "Deadline",
-  "Contributions",
-  "Indicative number of grants",
   "CAll link",
 ];
 const DESCRIPTION_COLUMN = "Topic description";
 const FULL_DESCRIPTION_FIELD = "Topic description full";
 const BUDGET_COLUMN = "Budget (EUR) - Year : 2026";
+const STATUS_COLUMN = "Status";
 const DESCRIPTION_PREVIEW_LENGTH = 220;
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 
@@ -26,9 +26,12 @@ const PAGE_SIZE = 25;
 const EXPORT_FETCH_PAGE_SIZE = 100;
 const REQUEST_TIMEOUT_MS = 10000;
 const THEME_KEY = "eu-dashboard-theme";
+const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 
 let xlsxLoadPromise = null;
 let searchDebounceTimer = null;
+let autoRefreshTimerId = null;
+let autoRefreshInFlight = false;
 
 const I18N = {
   en: {
@@ -51,6 +54,7 @@ const I18N = {
     prev: "Prev",
     next: "Next",
     readMore: "Read more",
+    filterPlaceholder: "Filter...",
     modalTitle: "Call details",
     modalClose: "Close",
     modalTopicCode: "Topic code",
@@ -87,6 +91,7 @@ const I18N = {
     prev: "Anterior",
     next: "Urmator",
     readMore: "Citeste mai mult",
+    filterPlaceholder: "Filtreaza...",
     modalTitle: "Detalii apel",
     modalClose: "Inchide",
     modalTopicCode: "Cod topic",
@@ -121,6 +126,7 @@ const state = {
   selectedRows: new Map(),
   activeDescriptionRow: null,
   remoteQuery: "",
+  columnFilters: Object.create(null),
 };
 
 const refs = {
@@ -135,6 +141,7 @@ const refs = {
   exportCsvBtn: document.getElementById("exportCsvBtn"),
   exportXlsxBtn: document.getElementById("exportXlsxBtn"),
   themeToggleBtn: document.getElementById("themeToggleBtn"),
+  tableWrap: document.querySelector(".table-wrap"),
   tableHeadRow: document.getElementById("tableHeadRow"),
   tableBody: document.getElementById("tableBody"),
   cardList: document.getElementById("cardList"),
@@ -169,6 +176,18 @@ function t(key, vars = {}) {
 function sanitize(value) {
   if (value === null || value === undefined || value === "") return "N/A";
   return String(value);
+}
+
+function normalizeFilterValue(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function ensureColumnFilters() {
+  for (const col of COLUMN_ORDER) {
+    if (typeof state.columnFilters[col] !== "string") {
+      state.columnFilters[col] = "";
+    }
+  }
 }
 
 function buildPublicTopicUrl(topicCode) {
@@ -210,6 +229,13 @@ function normalizeClientRow(row) {
     normalized[FULL_DESCRIPTION_FIELD] = normalized[DESCRIPTION_COLUMN];
   }
   normalized._statusLabel = String(normalized._statusLabel || "").toLowerCase();
+  if (!String(normalized[STATUS_COLUMN] || "").trim()) {
+    normalized[STATUS_COLUMN] = normalized._statusLabel === "forthcoming"
+      ? "Forthcoming"
+      : normalized._statusLabel === "open"
+        ? "Open"
+        : "N/A";
+  }
   normalized._budgetEstimated = normalized._budgetEstimated === true || String(normalized._budgetEstimated).toLowerCase() === "true";
   normalized._budgetSourceYear = String(normalized._budgetSourceYear || "").trim();
   normalized._budgetFallbackWarning = String(normalized._budgetFallbackWarning || "").trim();
@@ -346,6 +372,35 @@ function updateMetaText() {
     const sourceText = t("source", { source: state.source });
     refs.updatedAt.textContent = refs.updatedAt.textContent ? `${refs.updatedAt.textContent} | ${sourceText}` : sourceText;
   }
+}
+
+function captureScrollSnapshot() {
+  const modalBody = refs.descModal ? refs.descModal.querySelector(".modal-body") : null;
+  return {
+    windowX: window.scrollX,
+    windowY: window.scrollY,
+    tableScrollLeft: refs.tableWrap ? refs.tableWrap.scrollLeft : 0,
+    tableScrollTop: refs.tableWrap ? refs.tableWrap.scrollTop : 0,
+    modalScrollTop: modalBody ? modalBody.scrollTop : 0,
+  };
+}
+
+function restoreScrollSnapshot(snapshot) {
+  if (!snapshot) return;
+
+  requestAnimationFrame(() => {
+    if (refs.tableWrap) {
+      refs.tableWrap.scrollLeft = snapshot.tableScrollLeft;
+      refs.tableWrap.scrollTop = snapshot.tableScrollTop;
+    }
+
+    const modalBody = refs.descModal ? refs.descModal.querySelector(".modal-body") : null;
+    if (modalBody && isModalOpen()) {
+      modalBody.scrollTop = snapshot.modalScrollTop;
+    }
+
+    window.scrollTo(snapshot.windowX, snapshot.windowY);
+  });
 }
 
 function applyPayload(payload, responseSource = "", requestedPage = 1) {
@@ -486,16 +541,37 @@ function createDescriptionCell(row) {
 
 function getFilteredRows() {
   const sourceRows = state.showSelectedOnly ? getSelectedRows() : state.rows;
-  const query = refs.searchInput.value.trim().toLowerCase();
-  if (!query) return sourceRows;
+  const query = normalizeFilterValue(refs.searchInput.value);
+  const hasColumnFilters = COLUMN_ORDER.some((col) => normalizeFilterValue(state.columnFilters[col]));
 
-  if (!state.showSelectedOnly && state.remoteQuery && state.remoteQuery === query) {
-    return sourceRows;
+  if (!query && !hasColumnFilters) return sourceRows;
+
+  let rows = sourceRows;
+
+  if (query) {
+    const queryAlreadyAppliedRemotely = !state.showSelectedOnly && state.remoteQuery && state.remoteQuery === query;
+    if (!queryAlreadyAppliedRemotely) {
+      rows = rows.filter((row) =>
+        COLUMN_ORDER.some((col) => normalizeFilterValue(row[col]).includes(query)),
+      );
+    }
   }
 
-  return sourceRows.filter((row) =>
-    COLUMN_ORDER.some((col) => String(row[col] || "").toLowerCase().includes(query)),
-  );
+  if (hasColumnFilters) {
+    rows = rows.filter((row) =>
+      COLUMN_ORDER.every((col) => {
+        const columnFilter = normalizeFilterValue(state.columnFilters[col]);
+        if (!columnFilter) return true;
+
+        const rowValue = col === DESCRIPTION_COLUMN
+          ? normalizeFilterValue(getFullDescription(row))
+          : normalizeFilterValue(row[col]);
+        return rowValue.includes(columnFilter);
+      }),
+    );
+  }
+
+  return rows;
 }
 
 function updatePager() {
@@ -694,6 +770,8 @@ function renderRows() {
 }
 
 function applyLanguage() {
+  ensureColumnFilters();
+
   refs.title.textContent = t("title");
   refs.labelPeriod.textContent = t("period");
   refs.labelLanguage.textContent = t("language");
@@ -742,7 +820,25 @@ function applyLanguage() {
 
   for (const col of COLUMN_ORDER) {
     const th = document.createElement("th");
-    th.textContent = col;
+
+    const label = document.createElement("span");
+    label.className = "column-heading-label";
+    label.textContent = col;
+    th.appendChild(label);
+
+    const filterInput = document.createElement("input");
+    filterInput.type = "search";
+    filterInput.className = "column-filter-input";
+    filterInput.placeholder = t("filterPlaceholder");
+    filterInput.value = state.columnFilters[col] || "";
+    filterInput.spellcheck = false;
+    filterInput.setAttribute("aria-label", `${col} ${t("filterPlaceholder")}`);
+    filterInput.addEventListener("input", () => {
+      state.columnFilters[col] = filterInput.value;
+      renderRows();
+    });
+    th.appendChild(filterInput);
+
     refs.tableHeadRow.appendChild(th);
   }
 
@@ -869,7 +965,9 @@ function buildEndpointUrl(endpoint, targetPage, forceRefresh) {
   return `${endpoint}?${params.toString()}`;
 }
 
-async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1) {
+async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, options = {}) {
+  const preservePosition = options && options.preservePosition === true;
+  const scrollSnapshot = preservePosition ? captureScrollSnapshot() : null;
   refs.statusText.textContent = t("statusLoading");
 
   const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
@@ -921,7 +1019,29 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1) 
       return;
     }
     refs.statusText.textContent = `${t("statusError")} ${error.message}`;
+  } finally {
+    if (scrollSnapshot) {
+      restoreScrollSnapshot(scrollSnapshot);
+    }
   }
+}
+
+function setupAutoRefresh() {
+  if (autoRefreshTimerId) {
+    clearInterval(autoRefreshTimerId);
+  }
+
+  autoRefreshTimerId = window.setInterval(async () => {
+    if (document.visibilityState === "hidden") return;
+    if (autoRefreshInFlight) return;
+
+    autoRefreshInFlight = true;
+    try {
+      await loadSnapshot(true, state.page, { preservePosition: true });
+    } finally {
+      autoRefreshInFlight = false;
+    }
+  }, AUTO_REFRESH_INTERVAL_MS);
 }
 
 function csvEscape(value) {
@@ -1110,6 +1230,8 @@ if (refs.nextPageBtnBottom) {
 }
 
 (function init() {
+  ensureColumnFilters();
+
   applyTheme(resolveSavedTheme());
 
   const savedLang = localStorage.getItem("eu-dashboard-lang");
@@ -1120,6 +1242,7 @@ if (refs.nextPageBtnBottom) {
 
   applyLanguage();
   bindModalEvents();
+  setupAutoRefresh();
 
   const localPayload = loadLocalCache();
   if (localPayload && Array.isArray(localPayload.items)) {
