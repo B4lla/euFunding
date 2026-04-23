@@ -141,7 +141,9 @@ function setMemoryCache(cacheKey, payload) {
 async function readSnapshotFile() {
   const candidates = [
     path.join(process.cwd(), "data", "calls.json"),
+    path.join(process.cwd(), "public", "data", "calls.json"),
     path.join("/var/task", "data", "calls.json"),
+    path.join("/var/task", "public", "data", "calls.json"),
   ];
 
   for (const p of candidates) {
@@ -154,6 +156,47 @@ async function readSnapshotFile() {
       return json;
     } catch {
       // try next path
+    }
+  }
+
+  const manifestCandidates = [
+    path.join(process.cwd(), "data", "calls.manifest.json"),
+    path.join(process.cwd(), "public", "data", "calls.manifest.json"),
+    path.join("/var/task", "data", "calls.manifest.json"),
+    path.join("/var/task", "public", "data", "calls.manifest.json"),
+  ];
+
+  for (const manifestPath of manifestCandidates) {
+    try {
+      const raw = await fs.readFile(manifestPath, "utf8");
+      const manifest = JSON.parse(raw);
+      if (!manifest || typeof manifest !== "object" || !Array.isArray(manifest.parts)) continue;
+
+      const baseDir = path.dirname(manifestPath);
+      const collectedItems = [];
+
+      for (const part of manifest.parts) {
+        const partPathRaw = String(part.path || part.file || part.url || "").trim();
+        if (!partPathRaw) continue;
+
+        const normalized = partPathRaw.replace(/^\/+/, "").replace(/^data\//i, "");
+        const chunkPath = path.join(baseDir, normalized);
+        const chunkRaw = await fs.readFile(chunkPath, "utf8");
+        const chunkJson = JSON.parse(chunkRaw);
+        if (chunkJson && Array.isArray(chunkJson.items)) {
+          collectedItems.push(...chunkJson.items);
+        }
+      }
+
+      return {
+        generatedAt: manifest.generatedAt || new Date().toISOString(),
+        source: manifest.source || "Snapshot chunks",
+        total: Number(manifest.total || collectedItems.length || 0),
+        limits: manifest.limits || {},
+        items: collectedItems,
+      };
+    } catch {
+      // try next manifest
     }
   }
 

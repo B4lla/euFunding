@@ -20,6 +20,8 @@ const STATUS_COLUMN = "Status";
 const DESCRIPTION_PREVIEW_LENGTH = 220;
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 const SNAPSHOT_URL = `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}data/calls.json`;
+const SNAPSHOT_MANIFEST_URL = `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}data/calls.manifest.json`;
+const SNAPSHOT_MANIFEST_CANDIDATES = Array.from(new Set([SNAPSHOT_MANIFEST_URL, "/data/calls.manifest.json"]));
 const SNAPSHOT_URL_CANDIDATES = Array.from(new Set([SNAPSHOT_URL, "/data/calls.json"]));
 
 const CACHE_KEY = "eu-calls-cache-v6";
@@ -415,11 +417,36 @@ function toggleTheme() {
 }
 
 function saveLocalCache() {
-  return false;
+  if (!Array.isArray(state.allRows) || state.allRows.length === 0) return false;
+
+  const payload = {
+    generatedAt: state.generatedAt || new Date().toISOString(),
+    source: state.source || "local-cache",
+    page: state.page,
+    pageSize: state.pageSize,
+    total: state.allRows.length,
+    totalPages: Math.max(1, Math.ceil(state.allRows.length / (state.pageSize || PAGE_SIZE))),
+    items: state.allRows,
+    savedAt: Date.now(),
+  };
+
+  return storageSet(CACHE_KEY, JSON.stringify(payload));
 }
 
 function loadLocalCache() {
-  return null;
+  const raw = storageGet(CACHE_KEY);
+  if (!raw) return null;
+
+  const parsed = safeParseJSON(raw);
+  if (!parsed || !Array.isArray(parsed.items)) return null;
+
+  const savedAt = Number(parsed.savedAt || 0);
+  if (!Number.isFinite(savedAt) || savedAt <= 0 || (Date.now() - savedAt) > CACHE_MAX_AGE_MS) {
+    storageRemove(CACHE_KEY);
+    return null;
+  }
+
+  return parsed;
 }
 
 function updateMetaText() {
@@ -484,6 +511,7 @@ function applyPayload(payload, responseSource = "", requestedPage = 1) {
   const safePage = Number.isFinite(Number(requestedPage)) ? Number(requestedPage) : 1;
   state.page = Math.min(Math.max(safePage, 1), state.totalPages);
 
+  saveLocalCache();
   updateMetaText();
   renderRows();
 }
