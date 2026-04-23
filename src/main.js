@@ -19,8 +19,9 @@ const BUDGET_COLUMN = "Budget (EUR) - Year : 2026";
 const STATUS_COLUMN = "Status";
 const DESCRIPTION_PREVIEW_LENGTH = 220;
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
+const SNAPSHOT_URL = `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}data/calls.json`;
 
-const CACHE_KEY = "eu-calls-cache-v5";
+const CACHE_KEY = "eu-calls-cache-v6";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const PAGE_SIZE = 25;
 const EXPORT_FETCH_PAGE_SIZE = 100;
@@ -1380,11 +1381,11 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
 
   const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
   let endpoints = isLocal
-    ? ["/data/calls.json", "/api/calls"]
-    : ["/api/calls", "/data/calls.json"];
+    ? [SNAPSHOT_URL, "/api/calls"]
+    : ["/api/calls", SNAPSHOT_URL];
 
   if (forceRefresh) {
-    endpoints = ["/api/calls", "/data/calls.json"];
+    endpoints = ["/api/calls", SNAPSHOT_URL];
   }
 
   try {
@@ -1393,7 +1394,7 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
 
     for (const endpoint of endpoints) {
       try {
-        if (endpoint === "/data/calls.json") {
+        if (endpoint === SNAPSHOT_URL) {
           const reqOptions = { headers: { Accept: "application/json" } };
           if (forceRefresh) reqOptions.cache = "no-store";
           const res = await fetchWithTimeout(endpoint, reqOptions);
@@ -1510,7 +1511,7 @@ async function getRowsForExport() {
   const fromApi = await fetchAllRowsForExport();
   if (fromApi && fromApi.length > 0) return fromApi;
 
-  const fallback = await fetchWithTimeout("/data/calls.json", {
+  const fallback = await fetchWithTimeout(SNAPSHOT_URL, {
     headers: {
       Accept: "application/json",
     },
