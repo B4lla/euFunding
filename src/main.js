@@ -21,8 +21,8 @@ const DESCRIPTION_PREVIEW_LENGTH = 220;
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 const SNAPSHOT_URL = `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}data/calls.json`;
 const SNAPSHOT_MANIFEST_URL = `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}data/calls.manifest.json`;
-const SNAPSHOT_MANIFEST_CANDIDATES = Array.from(new Set([SNAPSHOT_MANIFEST_URL, "/data/calls.manifest.json"]));
-const SNAPSHOT_URL_CANDIDATES = Array.from(new Set([SNAPSHOT_URL, "/data/calls.json"]));
+const SNAPSHOT_MANIFEST_CANDIDATES = [];
+const SNAPSHOT_URL_CANDIDATES = ["/api/calls?all=1"];
 
 const CACHE_KEY = "eu-calls-cache-v6";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -437,36 +437,12 @@ function toggleTheme() {
 }
 
 function saveLocalCache() {
-  if (!Array.isArray(state.allRows) || state.allRows.length === 0) return false;
-
-  const payload = {
-    generatedAt: state.generatedAt || new Date().toISOString(),
-    source: state.source || "local-cache",
-    page: state.page,
-    pageSize: state.pageSize,
-    total: state.allRows.length,
-    totalPages: Math.max(1, Math.ceil(state.allRows.length / (state.pageSize || PAGE_SIZE))),
-    items: state.allRows,
-    savedAt: Date.now(),
-  };
-
-  return storageSet(CACHE_KEY, JSON.stringify(payload));
+  return false;
 }
 
 function loadLocalCache() {
-  const raw = storageGet(CACHE_KEY);
-  if (!raw) return null;
-
-  const parsed = safeParseJSON(raw);
-  if (!parsed || !Array.isArray(parsed.items)) return null;
-
-  const savedAt = Number(parsed.savedAt || 0);
-  if (!Number.isFinite(savedAt) || savedAt <= 0 || (Date.now() - savedAt) > CACHE_MAX_AGE_MS) {
-    storageRemove(CACHE_KEY);
-    return null;
-  }
-
-  return parsed;
+  storageRemove(CACHE_KEY);
+  return null;
 }
 
 function readLiveReconcileCache() {
@@ -1518,8 +1494,11 @@ async function fetchSnapshotManifest(forceRefresh = false) {
   for (const endpoint of SNAPSHOT_MANIFEST_CANDIDATES) {
     try {
       const reqOptions = { headers: { Accept: "application/json" } };
+      const requestEndpoint = forceRefresh && endpoint.includes("/api/calls")
+        ? `${endpoint}${endpoint.includes("?") ? "&" : "?"}refresh=1`
+        : endpoint;
       if (forceRefresh) reqOptions.cache = "no-store";
-      const res = await fetchWithTimeout(endpoint, reqOptions);
+      const res = await fetchWithTimeout(requestEndpoint, reqOptions);
       if (!res.ok) continue;
       const data = await readJsonIfPossible(res, false);
       if (!data || !Array.isArray(data.parts)) continue;
@@ -1578,7 +1557,10 @@ async function fetchSnapshotPayload(forceRefresh = false) {
     try {
       const reqOptions = { headers: { Accept: "application/json" } };
       if (forceRefresh) reqOptions.cache = "no-store";
-      const res = await fetchWithTimeout(endpoint, reqOptions);
+      const requestEndpoint = forceRefresh && endpoint.includes("/api/calls")
+        ? `${endpoint}${endpoint.includes("?") ? "&" : "?"}refresh=1`
+        : endpoint;
+      const res = await fetchWithTimeout(requestEndpoint, reqOptions);
       if (!res.ok) continue;
       const data = await readJsonIfPossible(res);
       if (!data || !Array.isArray(data.items)) continue;
@@ -1723,12 +1705,7 @@ async function handleRefreshClick() {
   updateRefreshButtonCooldownState();
 
   try {
-    // Request a persistent JSON rebuild through GitHub Actions.
-    // Do not reconcile or delete browser rows from live API responses.
-    await triggerPersistentSnapshotRefresh();
-
-    // Re-read the deployed JSON snapshot with no-store. If Vercel has not
-    // redeployed yet, the current dataset remains stable.
+    refs.statusText.textContent = t("statusLoading");
     await loadSnapshot(true, state.page, { preservePosition: true });
   } finally {
     updateRefreshButtonCooldownState();
