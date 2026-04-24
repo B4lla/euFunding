@@ -23,7 +23,7 @@ const LIVE_DATA_ENDPOINT = "/api/calls?all=1";
 const SNAPSHOT_MANIFEST_CANDIDATES = [];
 const SNAPSHOT_URL_CANDIDATES = [LIVE_DATA_ENDPOINT];
 
-const CACHE_KEY = "eu-calls-live-cache-v2";
+const CACHE_KEY = "eu-calls-live-cache-v3";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const PAGE_SIZE = 25;
 const EXPORT_FETCH_PAGE_SIZE = 100;
@@ -287,10 +287,12 @@ function isDefaultSelectFilter(column, filter) {
 function splitSelectValue(value) {
   const raw = sanitize(value);
   if (raw === "N/A") return [];
+
   const parts = String(raw)
-    .split(/\s*(?:;|\|||•)\s*/g)
+    .split(/\s*(?:;|\||•|\r?\n)\s*/g)
     .map((entry) => entry.trim())
     .filter(Boolean);
+
   return parts.length ? parts : [raw];
 }
 
