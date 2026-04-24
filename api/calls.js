@@ -399,25 +399,41 @@ function mapActionType(raw) {
   return value || "N/A";
 }
 
+function buildPortalSearchUrl(topicCode) {
+  const code = String(topicCode || "").trim();
+  if (!code) return "N/A";
+
+  const params = new URLSearchParams({
+    keywords: code,
+    programmePeriod: PROGRAMME_PERIOD,
+    status: "31094501,31094502",
+  });
+
+  return `https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/search?${params.toString()}`;
+}
+
 function buildCallLink(topicCode, candidateUrl) {
   const code = String(topicCode || "").trim();
-  const fallback = code ? `${PUBLIC_CALL_BASE_URL}${encodeURIComponent(code)}` : "N/A";
+  const searchFallback = buildPortalSearchUrl(code);
   const raw = String(candidateUrl || "").trim();
 
-  if (!raw) return fallback;
-
-  const dataTopicMatch = raw.match(/\/opportunities\/data\/topicDetails\/([^/?#]+)/i);
-  if (dataTopicMatch) {
-    const slug = decodeURIComponent(dataTopicMatch[1]).replace(/\.json$/i, "");
-    const target = code || slug;
-    return target ? `${PUBLIC_CALL_BASE_URL}${encodeURIComponent(target)}` : "N/A";
-  }
+  if (!raw || raw === "N/A") return searchFallback;
 
   if (/^https?:\/\//i.test(raw)) {
-    return raw.replace(/\.json(?=($|[?#]))/i, "");
+    const cleanUrl = raw.replace(/\.json(?=($|[?#]))/i, "");
+
+    if (cleanUrl.includes("/opportunities/portal/screen/opportunities/")) {
+      return cleanUrl;
+    }
+
+    if (cleanUrl.includes("/opportunities/data/topicDetails/")) {
+      return searchFallback;
+    }
+
+    return cleanUrl;
   }
 
-  return fallback;
+  return searchFallback;
 }
 
 function resolveStatus(metadata, actionStatusRaw) {
