@@ -463,7 +463,7 @@ function saveThemePreference(theme) {
   try {
     storageSet(THEME_KEY, theme);
   } catch {
-    // best effort only
+
   }
   document.cookie = `eu_dashboard_theme=${encodeURIComponent(theme)}; Max-Age=31536000; Path=/; SameSite=Lax`;
 }
@@ -564,15 +564,11 @@ function shouldSkipLiveReconcile(codes) {
 }
 
 function mergeVerifiedRows() {
-  // Disabled: the browser must never mutate/delete the dataset based on live checks.
-  // Disabled: navigation must never delete or mutate the visible dataset.
   return false;
 }
 
 
 function removeMissingRows() {
-  // Disabled: navigating pages or partial live responses must never remove rows visually.
-  // Rows are replaced only when the full live API dataset is loaded again.
   return false;
 }
 
@@ -583,10 +579,6 @@ function markReconciledSource(source) {
 }
 
 async function reconcileCurrentPageWithLive(options = {}) {
-  // Disabled intentionally: verifying/removing items while the user navigates pages
-  // can make the global count shrink page by page when the live API returns partial
-  // or inconsistent verification responses. The persistent snapshot is updated by
-  // Live API refreshes replace the whole dataset; page navigation is read-only.
   return;
 }
 
@@ -1908,9 +1900,6 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
       payload = snapshotData.payload;
       responseSource = snapshotData.responseSource;
     }
-
-    // The browser reads the live Vercel API endpoint. Navigation remains read-only;
-    // only this load function replaces the full in-memory dataset.
 
     if (!payload) {
       throw new Error("No valid data source available");
