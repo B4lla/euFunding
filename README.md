@@ -181,3 +181,18 @@ GITHUB_DISPATCH_TOKEN=github_pat_...
 ```
 
 El script `scripts/fetch-calls.js` está protegido: si la API devuelve una descarga parcial, por ejemplo 623 de 790, el workflow falla y no sobrescribe el JSON bueno.
+
+
+## Nota sobre la actualización del snapshot
+
+El workflow descarga las calls en páginas de 50 (`EU_API_PAGE_SIZE=50`) en vez de 100. La API de la UE puede informar de 790 resultados, pero si se le pide una página demasiado grande puede devolver páginas parciales o inestables. Por eso el script ahora descarga en trozos más pequeños, registra cuántos items añade por página y falla sin sobrescribir el JSON si no consigue al menos el 98% del total informado por la API.
+
+Para cambiarlo en GitHub Actions, ajusta estas variables en `.github/workflows/update-calls-data.yml`:
+
+```yaml
+EU_API_PAGE_SIZE: 50
+EU_API_MAX_CALLS: 80
+EU_API_REQUEST_TIMEOUT_MS: 45000
+EU_API_REQUEST_RETRIES: 5
+EU_API_REQUEST_RETRY_DELAY_MS: 4000
+```

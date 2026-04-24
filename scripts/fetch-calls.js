@@ -4,8 +4,8 @@ const path = require("path");
 const SEARCH_URL = "https://api.tech.ec.europa.eu/search-api/prod/rest/search";
 const API_KEY = "SEDIA";
 const SEARCH_TEXT = "***";
-const PAGE_SIZE = 100;
-const MAX_API_CALLS = 20;
+const PAGE_SIZE = Number(process.env.EU_API_PAGE_SIZE || 50);
+const MAX_API_CALLS = Number(process.env.EU_API_MAX_CALLS || 80);
 const REQUEST_TIMEOUT_MS = Number(process.env.EU_API_REQUEST_TIMEOUT_MS || 30000);
 const REQUEST_RETRIES = Number(process.env.EU_API_REQUEST_RETRIES || 3);
 const REQUEST_RETRY_DELAY_MS = Number(process.env.EU_API_REQUEST_RETRY_DELAY_MS || 2000);
@@ -580,14 +580,26 @@ async function main() {
       break;
     }
 
+    const beforeRows = rows.length;
+    let normalizedCount = 0;
+    let duplicateCount = 0;
+
     for (const item of result.items) {
       const row = normalize(item);
       if (!row) continue;
+      normalizedCount += 1;
       const code = String(row["Topic code"] || "").trim().toLowerCase();
-      if (code && seenCodes.has(code)) continue;
+      if (code && seenCodes.has(code)) {
+        duplicateCount += 1;
+        continue;
+      }
       if (code) seenCodes.add(code);
       rows.push(row);
     }
+
+    console.log(
+      `Page ${page}/${totalPages}: raw=${result.items.length}, normalized=${normalizedCount}, duplicates=${duplicateCount}, added=${rows.length - beforeRows}, totalUnique=${rows.length}`
+    );
   }
 
   const minExpectedRows = expectedTotal > 0 ? Math.floor(expectedTotal * 0.98) : 1;
