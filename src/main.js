@@ -23,7 +23,7 @@ const LIVE_DATA_ENDPOINT = "/api/calls?all=1";
 const SNAPSHOT_MANIFEST_CANDIDATES = [];
 const SNAPSHOT_URL_CANDIDATES = [LIVE_DATA_ENDPOINT];
 
-const CACHE_KEY = "eu-calls-live-cache-v1";
+const CACHE_KEY = "eu-calls-live-cache-v2";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const PAGE_SIZE = 25;
 const EXPORT_FETCH_PAGE_SIZE = 100;
@@ -240,17 +240,30 @@ function normalizeFilterValue(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-const DEFAULT_AVAILABLE_STATUSES = ["Open", "Forthcoming"];
+const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming"];
 const MULTISELECT_COLUMNS = new Set([STATUS_COLUMN, "Stages", "Programme", "Type of Action"]);
 
+function canonicalizeSelectValue(value) {
+  return normalizeFilterValue(value)
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[’']/g, "'")
+    .trim();
+}
+
 function normalizeSelectValues(values) {
-  if (Array.isArray(values)) return values.filter(Boolean);
-  if (typeof values === "string" && values.trim()) return [values.trim()];
-  return [];
+  const rawValues = Array.isArray(values)
+    ? values
+    : typeof values === "string" && values.trim()
+      ? [values]
+      : [];
+
+  return Array.from(new Set(rawValues.map(canonicalizeSelectValue).filter(Boolean)));
 }
 
 function getDefaultSelectValues(column) {
-  return column === STATUS_COLUMN ? [...DEFAULT_AVAILABLE_STATUSES] : [];
+  return column === STATUS_COLUMN ? [...DEFAULT_AVAILABLE_STATUS_KEYS] : [];
 }
 
 function getSelectFilterValues(filter, column = "") {
@@ -271,9 +284,30 @@ function isDefaultSelectFilter(column, filter) {
   return arraysEqualAsSets(getSelectFilterValues(filter, column), getDefaultSelectValues(column));
 }
 
+function splitSelectValue(value) {
+  const raw = sanitize(value);
+  if (raw === "N/A") return [];
+  const parts = String(raw)
+    .split(/\s*(?:;|\|||•)\s*/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return parts.length ? parts : [raw];
+}
+
+function getSelectTokensForValue(value) {
+  const raw = sanitize(value);
+  const tokens = new Set();
+  const fullKey = canonicalizeSelectValue(raw);
+  if (fullKey) tokens.add(fullKey);
+  for (const part of splitSelectValue(raw)) {
+    const partKey = canonicalizeSelectValue(part);
+    if (partKey) tokens.add(partKey);
+  }
+  return tokens;
+}
+
 function isAvailableStatusLabel(value) {
-  const normalized = normalizeFilterValue(value);
-  return normalized === "open" || normalized === "forthcoming";
+  return DEFAULT_AVAILABLE_STATUS_KEYS.includes(canonicalizeSelectValue(value));
 }
 
 function createDefaultFilterState(column) {
@@ -463,7 +497,6 @@ function saveThemePreference(theme) {
   try {
     storageSet(THEME_KEY, theme);
   } catch {
-
   }
   document.cookie = `eu_dashboard_theme=${encodeURIComponent(theme)}; Max-Age=31536000; Path=/; SameSite=Lax`;
 }
@@ -794,7 +827,7 @@ function getColumnMetadata(col) {
 
   const rows = state.allRows.length ? state.allRows : state.rows;
   const values = [];
-  const optionSet = new Set();
+  const optionMap = new Map();
   const numericValues = [];
   const dateValues = [];
   let hasNA = false;
@@ -804,8 +837,14 @@ function getColumnMetadata(col) {
     values.push(rawValue);
     if (rawValue === "N/A") {
       hasNA = true;
+    } else if (MULTISELECT_COLUMNS.has(col)) {
+      for (const optionValue of splitSelectValue(rawValue)) {
+        const key = canonicalizeSelectValue(optionValue);
+        if (key && !optionMap.has(key)) optionMap.set(key, optionValue);
+      }
     } else {
-      optionSet.add(rawValue);
+      const key = canonicalizeSelectValue(rawValue);
+      if (key && !optionMap.has(key)) optionMap.set(key, rawValue);
     }
 
     if (col === BUDGET_COLUMN) {
@@ -819,11 +858,21 @@ function getColumnMetadata(col) {
     }
   }
 
-  const options = Array.from(optionSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const optionEntries = Array.from(optionMap.entries()).sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true }));
+  const options = optionEntries.map(([, label]) => label);
+  const optionKeys = optionEntries.map(([key]) => key);
+  const optionLabelByKey = Object.fromEntries(optionEntries);
+  if (col === STATUS_COLUMN) {
+    for (const [key, label] of [["open", "Open"], ["forthcoming", "Forthcoming"]]) {
+      if (!optionLabelByKey[key]) optionLabelByKey[key] = label;
+    }
+  }
   dateValues.sort();
   const meta = {
     hasNA,
     options,
+    optionKeys,
+    optionLabelByKey,
     min: numericValues.length ? Math.min(...numericValues) : null,
     max: numericValues.length ? Math.max(...numericValues) : null,
     dateMin: dateValues.length ? dateValues[0] : null,
@@ -870,8 +919,9 @@ function rowMatchesColumnFilter(row, col) {
   if (filter.kind === "select") {
     const values = getSelectFilterValues(filter, col);
     if (!values.length && !filter.includeNA) return true;
-    if (isNA) return Boolean(filter.includeNA) || values.includes("__NA__");
-    return values.includes(rawValue);
+    if (isNA) return Boolean(filter.includeNA) || values.includes("__na__");
+    const rowTokens = getSelectTokensForValue(rawValue);
+    return values.some((value) => rowTokens.has(value));
   }
 
   if (filter.kind === "date") {
@@ -1297,7 +1347,7 @@ function createColumnFilterControl(col) {
     btnSelectAll.textContent = t("filterSelectAll");
     btnSelectAll.addEventListener("click", (event) => {
       event.preventDefault();
-      state.columnFilters[col].values = [...meta.options];
+      state.columnFilters[col].values = [...(meta.optionKeys || meta.options.map(canonicalizeSelectValue))];
       state.page = 1;
       renderFiltersPanel();
       renderRows();
@@ -1320,6 +1370,7 @@ function createColumnFilterControl(col) {
     const optionsWrap = document.createElement("div");
     optionsWrap.className = "multiselect-options";
     const optionValues = [...meta.options];
+    const optionKeys = meta.optionKeys || optionValues.map(canonicalizeSelectValue);
 
     if (!optionValues.length && !meta.hasNA) {
       const empty = document.createElement("p");
@@ -1328,16 +1379,17 @@ function createColumnFilterControl(col) {
       optionsWrap.appendChild(empty);
     }
 
-    for (const optionValue of optionValues) {
+    for (const [index, optionValue] of optionValues.entries()) {
+      const optionKey = optionKeys[index] || canonicalizeSelectValue(optionValue);
       const optionLabel = document.createElement("label");
       optionLabel.className = "multiselect-option";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
-      checkbox.checked = currentValues.has(optionValue);
+      checkbox.checked = currentValues.has(optionKey);
       checkbox.addEventListener("change", () => {
         const nextValues = new Set(getSelectFilterValues(state.columnFilters[col], col));
-        if (checkbox.checked) nextValues.add(optionValue);
-        else nextValues.delete(optionValue);
+        if (checkbox.checked) nextValues.add(optionKey);
+        else nextValues.delete(optionKey);
         const normalizedNextValues = Array.from(nextValues);
         state.columnFilters[col].values = normalizedNextValues.length ? normalizedNextValues : getDefaultSelectValues(col);
         state.page = 1;
@@ -1381,10 +1433,11 @@ function createColumnFilterControl(col) {
         summaryCount.textContent = "";
         return;
       }
-      if (values.length <= 2) {
-        summaryLabel.textContent = values.join(", ") || t("filterAny");
+      const labels = values.map((value) => meta.optionLabelByKey?.[value] || value);
+      if (labels.length <= 2) {
+        summaryLabel.textContent = labels.join(", ") || t("filterAny");
       } else {
-        summaryLabel.textContent = t("filterSelectedCount", { count: values.length });
+        summaryLabel.textContent = t("filterSelectedCount", { count: labels.length });
       }
       summaryCount.textContent = state.columnFilters[col].includeNA ? " + N/A" : "";
     }
