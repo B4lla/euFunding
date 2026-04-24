@@ -519,26 +519,29 @@ select:focus,
 
 .filters-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.9rem;
 }
 
 .filter-card {
-  padding: 0.75rem;
-  border-radius: 12px;
+  padding: 0.95rem;
+  border-radius: 16px;
   border: 1px solid var(--field-border);
-  background: var(--field-bg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.02)),
+    var(--field-bg);
   min-height: 100%;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .filter-card-label {
   display: block;
-  margin-bottom: 0.5rem;
-  font-size: 0.8rem;
-  font-weight: 700;
+  margin-bottom: 0.65rem;
+  font-size: 0.76rem;
+  font-weight: 800;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
 }
 
 .filter-card-empty {
@@ -637,48 +640,28 @@ select:focus,
   opacity: 0.42;
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 0;
-  table-layout: fixed;
-}
-
-thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: linear-gradient(180deg, var(--thead-bg-a) 0%, var(--thead-bg-b) 100%);
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  padding: 0.78rem;
-}
-
-.column-heading-label {
-  display: block;
+.table-wrap {
+  position: relative;
 }
 
 .filter-control-wrap {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.65rem;
 }
 
 .column-filter-input {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--field-border);
-  border-radius: 8px;
-  background: var(--field-bg);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--field-bg) 88%, transparent);
   color: var(--ink);
-  font-size: 0.78rem;
+  font-size: 0.88rem;
   font-weight: 600;
   letter-spacing: normal;
   text-transform: none;
-  padding: 0.34rem 0.45rem;
+  padding: 0.62rem 0.8rem;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
 .column-filter-input::placeholder {
@@ -686,46 +669,275 @@ thead th {
   opacity: 0.88;
 }
 
-.column-filter-input:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 42%, transparent);
-  outline-offset: 1px;
+.column-filter-input:hover {
+  border-color: color-mix(in srgb, var(--brand) 28%, var(--field-border));
 }
 
-.column-filter-select,
+.column-filter-input:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--brand) 52%, var(--field-border));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 16%, transparent);
+}
+
 .column-filter-date {
-  appearance: auto;
+  appearance: none;
+}
+
+.multiselect {
+  position: relative;
+}
+
+.multiselect[open] {
+  z-index: 4;
+}
+
+.multiselect > summary {
+  list-style: none;
+}
+
+.multiselect > summary::-webkit-details-marker {
+  display: none;
+}
+
+.multiselect-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.72rem 0.85rem;
+  border: 1px solid var(--field-border);
+  border-radius: 12px;
+  cursor: pointer;
+  user-select: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.08)),
+    color-mix(in srgb, var(--field-bg) 90%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.multiselect-trigger::after {
+  content: "▾";
+  color: var(--muted);
+  font-size: 0.92rem;
+  transition: transform 160ms ease;
+}
+
+.multiselect[open] .multiselect-trigger::after {
+  transform: rotate(180deg);
+}
+
+.multiselect-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.multiselect-count {
+  color: var(--brand);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.multiselect-panel {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: 0;
+  right: 0;
+  padding: 0.7rem;
+  border-radius: 14px;
+  border: 1px solid var(--glass-stroke);
+  background: linear-gradient(180deg, var(--panel-grad-a), var(--panel-grad-b));
+  box-shadow: 0 20px 34px rgba(17, 37, 52, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.multiselect-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.multiselect-action {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.38rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--brand-dark);
+  background: color-mix(in srgb, var(--brand) 14%, white);
+}
+
+.multiselect-options {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 15rem;
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+
+.multiselect-option {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--ink);
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.multiselect-option:hover {
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+}
+
+.multiselect-option input {
+  margin: 0;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--brand);
 }
 
 .range-filter-values {
   display: flex;
   justify-content: space-between;
-  gap: 0.5rem;
-  font-size: 0.72rem;
-  color: var(--muted);
-  text-transform: none;
-  letter-spacing: normal;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.range-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.38rem 0.58rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  color: var(--brand-dark);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.dual-range {
+  --range-start: 0%;
+  --range-end: 100%;
+  position: relative;
+  height: 2.2rem;
+}
+
+.dual-range::before,
+.dual-range::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 0.42rem;
+  border-radius: 999px;
+}
+
+.dual-range::before {
+  background: color-mix(in srgb, var(--brand) 12%, var(--field-border));
+}
+
+.dual-range::after {
+  left: var(--range-start);
+  right: calc(100% - var(--range-end));
+  background: linear-gradient(90deg, var(--brand) 0%, var(--accent) 100%);
 }
 
 .column-filter-range {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
   width: 100%;
+  height: 2.2rem;
   margin: 0;
-  accent-color: var(--brand);
+  background: none;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.column-filter-range::-webkit-slider-runnable-track {
+  height: 0.42rem;
+  background: transparent;
+}
+
+.column-filter-range::-moz-range-track {
+  height: 0.42rem;
+  background: transparent;
+}
+
+.column-filter-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid white;
+  background: var(--brand);
+  box-shadow: 0 2px 10px rgba(17, 37, 52, 0.25);
+  margin-top: -0.29rem;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.column-filter-range::-moz-range-thumb {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid white;
+  background: var(--brand);
+  box-shadow: 0 2px 10px rgba(17, 37, 52, 0.25);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.range-number-inputs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.range-number-wrap {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.range-number {
+  padding-block: 0.55rem;
 }
 
 .filter-na-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
-  font-size: 0.72rem;
+  gap: 0.45rem;
+  font-size: 0.78rem;
   color: var(--muted);
   text-transform: none;
   letter-spacing: normal;
+  font-weight: 600;
 }
 
 .filter-na-toggle input {
   margin: 0;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--brand);
 }
-
 thead th:nth-child(2) { min-width: 11rem; }
 thead th:nth-child(3) { min-width: 12rem; }
 thead th:nth-child(4) { min-width: 13rem; }
@@ -1137,6 +1349,24 @@ a.call-link {
   }
 
   .toolbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+@media (max-width: 900px) {
+  .filters-grid {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .multiselect-panel {
+    position: static;
+    margin-top: 0.45rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .range-number-inputs {
     grid-template-columns: 1fr;
   }
 }

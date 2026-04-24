@@ -2,12 +2,47 @@ name: Update EU calls data
 
 on:
   workflow_dispatch:
+  schedule:
+    # Runs every 30 minutes. GitHub may delay scheduled jobs a few minutes.
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-eu-calls-data
+  cancel-in-progress: false
 
 jobs:
-  no-file-snapshot:
+  update-data:
     runs-on: ubuntu-latest
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      EU_API_PAGE_SIZE: 50
+      EU_API_MAX_CALLS: 80
+      EU_API_REQUEST_TIMEOUT_MS: 45000
+      EU_API_REQUEST_RETRIES: 5
+      EU_API_REQUEST_RETRY_DELAY_MS: 4000
+
     steps:
-      - name: Snapshot disabled
-        run: |
-          echo "This project now loads EU calls through /api/calls with a 30-minute Vercel memory cache."
-          echo "No JSON snapshot commit is required."
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Refresh snapshot files
+        run: npm run update-data
+
+      - name: Commit updated snapshot if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update EU calls snapshot"
+          file_pattern: "data/calls.json data/calls.manifest.json data/chunks/*.json public/data/calls.json public/data/calls.manifest.json public/data/chunks/*.json"

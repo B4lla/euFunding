@@ -21,8 +21,8 @@ const DESCRIPTION_PREVIEW_LENGTH = 220;
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 const SNAPSHOT_URL = `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}data/calls.json`;
 const SNAPSHOT_MANIFEST_URL = `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}data/calls.manifest.json`;
-const SNAPSHOT_MANIFEST_CANDIDATES = [];
-const SNAPSHOT_URL_CANDIDATES = ["/api/calls?all=1"];
+const SNAPSHOT_MANIFEST_CANDIDATES = Array.from(new Set([SNAPSHOT_MANIFEST_URL, "/data/calls.manifest.json"]));
+const SNAPSHOT_URL_CANDIDATES = Array.from(new Set([SNAPSHOT_URL, "/data/calls.json"]));
 
 const CACHE_KEY = "eu-calls-cache-v6";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -72,6 +72,15 @@ const I18N = {
     next: "Next",
     readMore: "Read more",
     filterPlaceholder: "Filter...",
+    filterAny: "Any",
+    filterSelectedCount: "{count} selected",
+    filterSelectAll: "Select all",
+    filterReset: "Clear",
+    filterNoOptions: "No options",
+    filterNoNumeric: "No numeric data",
+    filterIncludeNA: "Include N/A",
+    rangeMin: "Min",
+    rangeMax: "Max",
     filtersShow: "Show filters",
     filtersHide: "Hide filters",
     filtersTitle: "Column filters",
@@ -119,6 +128,15 @@ const I18N = {
     next: "Urmator",
     readMore: "Citeste mai mult",
     filterPlaceholder: "Filtreaza...",
+    filterAny: "Oricare",
+    filterSelectedCount: "{count} selectate",
+    filterSelectAll: "Selecteaza tot",
+    filterReset: "Reseteaza",
+    filterNoOptions: "Fara optiuni",
+    filterNoNumeric: "Nu exista date numerice",
+    filterIncludeNA: "Include N/A",
+    rangeMin: "Min",
+    rangeMax: "Max",
     filtersShow: "Arata filtrele",
     filtersHide: "Ascunde filtrele",
     filtersTitle: "Filtre pe coloane",
@@ -223,13 +241,49 @@ function normalizeFilterValue(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+const DEFAULT_AVAILABLE_STATUSES = ["Open", "Forthcoming"];
+const MULTISELECT_COLUMNS = new Set([STATUS_COLUMN, "Stages", "Programme", "Type of Action"]);
+
+function normalizeSelectValues(values) {
+  if (Array.isArray(values)) return values.filter(Boolean);
+  if (typeof values === "string" && values.trim()) return [values.trim()];
+  return [];
+}
+
+function getDefaultSelectValues(column) {
+  return column === STATUS_COLUMN ? [...DEFAULT_AVAILABLE_STATUSES] : [];
+}
+
+function getSelectFilterValues(filter, column = "") {
+  if (!filter || filter.kind !== "select") return [];
+  const values = normalizeSelectValues(filter.values ?? filter.value);
+  return values.length ? values : getDefaultSelectValues(column);
+}
+
+function arraysEqualAsSets(left, right) {
+  const a = normalizeSelectValues(left);
+  const b = normalizeSelectValues(right);
+  if (a.length !== b.length) return false;
+  const bSet = new Set(b);
+  return a.every((entry) => bSet.has(entry));
+}
+
+function isDefaultSelectFilter(column, filter) {
+  return arraysEqualAsSets(getSelectFilterValues(filter, column), getDefaultSelectValues(column));
+}
+
+function isAvailableStatusLabel(value) {
+  const normalized = normalizeFilterValue(value);
+  return normalized === "open" || normalized === "forthcoming";
+}
+
 function createDefaultFilterState(column) {
   switch (column) {
     case STATUS_COLUMN:
     case "Stages":
     case "Programme":
     case "Type of Action":
-      return { kind: "select", value: "" };
+      return { kind: "select", values: getDefaultSelectValues(column), includeNA: false };
     case "Topic code":
       return { kind: "text", value: "" };
     case "Topic title":
@@ -252,6 +306,13 @@ function ensureColumnFilters() {
     const current = state.columnFilters[col];
     if (!current || typeof current !== "object") {
       state.columnFilters[col] = createDefaultFilterState(col);
+      continue;
+    }
+
+    if (current.kind === "select") {
+      current.values = getSelectFilterValues(current, col);
+      delete current.value;
+      if (typeof current.includeNA !== "boolean") current.includeNA = false;
     }
   }
 }
@@ -437,12 +498,36 @@ function toggleTheme() {
 }
 
 function saveLocalCache() {
-  return false;
+  if (!Array.isArray(state.allRows) || state.allRows.length === 0) return false;
+
+  const payload = {
+    generatedAt: state.generatedAt || new Date().toISOString(),
+    source: state.source || "local-cache",
+    page: state.page,
+    pageSize: state.pageSize,
+    total: state.allRows.length,
+    totalPages: Math.max(1, Math.ceil(state.allRows.length / (state.pageSize || PAGE_SIZE))),
+    items: state.allRows,
+    savedAt: Date.now(),
+  };
+
+  return storageSet(CACHE_KEY, JSON.stringify(payload));
 }
 
 function loadLocalCache() {
-  storageRemove(CACHE_KEY);
-  return null;
+  const raw = storageGet(CACHE_KEY);
+  if (!raw) return null;
+
+  const parsed = safeParseJSON(raw);
+  if (!parsed || !Array.isArray(parsed.items)) return null;
+
+  const savedAt = Number(parsed.savedAt || 0);
+  if (!Number.isFinite(savedAt) || savedAt <= 0 || (Date.now() - savedAt) > CACHE_MAX_AGE_MS) {
+    storageRemove(CACHE_KEY);
+    return null;
+  }
+
+  return parsed;
 }
 
 function readLiveReconcileCache() {
@@ -547,7 +632,8 @@ function restoreScrollSnapshot(snapshot) {
 }
 
 function applyPayload(payload, responseSource = "", requestedPage = 1) {
-  state.allRows = Array.isArray(payload.items) ? payload.items.map(normalizeClientRow) : [];
+  const normalizedRows = Array.isArray(payload.items) ? payload.items.map(normalizeClientRow) : [];
+  state.allRows = normalizedRows.filter((row) => isAvailableStatusLabel(row[STATUS_COLUMN] || row._statusLabel));
   state.rows = state.allRows;
   state.filterMetadata = Object.create(null);
   for (const row of state.rows) {
@@ -761,7 +847,10 @@ function hasActiveColumnFilters() {
   return COLUMN_ORDER.some((col) => {
     const filter = state.columnFilters[col];
     if (!filter || filter.kind === "none") return false;
-    if (filter.kind === "text" || filter.kind === "select") return Boolean(String(filter.value || "").trim());
+    if (filter.kind === "text") return Boolean(String(filter.value || "").trim());
+    if (filter.kind === "select") {
+      return !isDefaultSelectFilter(col, filter) || Boolean(filter.includeNA);
+    }
     if (filter.kind === "date") return Boolean(filter.value) || Boolean(filter.includeNA);
     if (filter.kind === "range") {
       const meta = getColumnMetadata(col);
@@ -788,9 +877,10 @@ function rowMatchesColumnFilter(row, col) {
   }
 
   if (filter.kind === "select") {
-    if (!filter.value) return true;
-    if (filter.value === "__NA__") return isNA;
-    return rawValue === filter.value;
+    const values = getSelectFilterValues(filter, col);
+    if (!values.length && !filter.includeNA) return true;
+    if (isNA) return Boolean(filter.includeNA) || values.includes("__NA__");
+    return values.includes(rawValue);
   }
 
   if (filter.kind === "date") {
@@ -1116,7 +1206,11 @@ function countActiveColumnFilters() {
   return COLUMN_ORDER.reduce((acc, col) => {
     const filter = state.columnFilters[col];
     if (!filter || filter.kind === "none") return acc;
-    if (filter.kind === "text" || filter.kind === "select") return acc + (String(filter.value || "").trim() ? 1 : 0);
+    if (filter.kind === "text") return acc + (String(filter.value || "").trim() ? 1 : 0);
+    if (filter.kind === "select") {
+      const active = !isDefaultSelectFilter(col, filter) || Boolean(filter.includeNA);
+      return acc + (active ? 1 : 0);
+    }
     if (filter.kind === "date") return acc + ((filter.value || filter.includeNA) ? 1 : 0);
     if (filter.kind === "range") {
       const meta = getColumnMetadata(col);
@@ -1188,32 +1282,123 @@ function createColumnFilterControl(col) {
       filterWrap.appendChild(datalist);
     }
   } else if (filterState.kind === "select") {
-    const select = document.createElement("select");
-    select.className = "column-filter-input column-filter-select";
-    const allOption = document.createElement("option");
-    allOption.value = "";
-    allOption.textContent = t("filterPlaceholder");
-    select.appendChild(allOption);
-    for (const optionValue of meta.options) {
-      const option = document.createElement("option");
-      option.value = optionValue;
-      option.textContent = optionValue;
-      select.appendChild(option);
-    }
-    if (meta.hasNA) {
-      const option = document.createElement("option");
-      option.value = "__NA__";
-      option.textContent = "N/A";
-      select.appendChild(option);
-    }
-    select.value = filterState.value || "";
-    select.addEventListener("change", () => {
-      state.columnFilters[col].value = select.value;
+    const currentValues = new Set(getSelectFilterValues(filterState, col));
+    const details = document.createElement("details");
+    details.className = "multiselect";
+
+    const summary = document.createElement("summary");
+    summary.className = "multiselect-trigger";
+    const summaryLabel = document.createElement("span");
+    summaryLabel.className = "multiselect-summary";
+    const summaryCount = document.createElement("span");
+    summaryCount.className = "multiselect-count";
+    summary.append(summaryLabel, summaryCount);
+    details.appendChild(summary);
+
+    const panel = document.createElement("div");
+    panel.className = "multiselect-panel";
+
+    const actions = document.createElement("div");
+    actions.className = "multiselect-actions";
+    const btnSelectAll = document.createElement("button");
+    btnSelectAll.type = "button";
+    btnSelectAll.className = "multiselect-action";
+    btnSelectAll.textContent = t("filterSelectAll");
+    btnSelectAll.addEventListener("click", (event) => {
+      event.preventDefault();
+      state.columnFilters[col].values = [...meta.options];
       state.page = 1;
+      renderFiltersPanel();
       renderRows();
-      updateFiltersPanelVisibility();
     });
-    filterWrap.appendChild(select);
+    const btnClear = document.createElement("button");
+    btnClear.type = "button";
+    btnClear.className = "multiselect-action";
+    btnClear.textContent = t("filterReset");
+    btnClear.addEventListener("click", (event) => {
+      event.preventDefault();
+      state.columnFilters[col].values = getDefaultSelectValues(col);
+      state.columnFilters[col].includeNA = false;
+      state.page = 1;
+      renderFiltersPanel();
+      renderRows();
+    });
+    actions.append(btnSelectAll, btnClear);
+    panel.appendChild(actions);
+
+    const optionsWrap = document.createElement("div");
+    optionsWrap.className = "multiselect-options";
+    const optionValues = [...meta.options];
+
+    if (!optionValues.length && !meta.hasNA) {
+      const empty = document.createElement("p");
+      empty.className = "filter-card-empty";
+      empty.textContent = t("filterNoOptions");
+      optionsWrap.appendChild(empty);
+    }
+
+    for (const optionValue of optionValues) {
+      const optionLabel = document.createElement("label");
+      optionLabel.className = "multiselect-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = currentValues.has(optionValue);
+      checkbox.addEventListener("change", () => {
+        const nextValues = new Set(getSelectFilterValues(state.columnFilters[col], col));
+        if (checkbox.checked) nextValues.add(optionValue);
+        else nextValues.delete(optionValue);
+        const normalizedNextValues = Array.from(nextValues);
+        state.columnFilters[col].values = normalizedNextValues.length ? normalizedNextValues : getDefaultSelectValues(col);
+        state.page = 1;
+        renderRows();
+        updateFiltersPanelVisibility();
+        updateSummary();
+      });
+      const textNode = document.createElement("span");
+      textNode.textContent = optionValue;
+      optionLabel.append(checkbox, textNode);
+      optionsWrap.appendChild(optionLabel);
+    }
+
+    if (meta.hasNA) {
+      const optionLabel = document.createElement("label");
+      optionLabel.className = "multiselect-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = Boolean(filterState.includeNA);
+      checkbox.addEventListener("change", () => {
+        state.columnFilters[col].includeNA = checkbox.checked;
+        state.page = 1;
+        renderRows();
+        updateFiltersPanelVisibility();
+        updateSummary();
+      });
+      const textNode = document.createElement("span");
+      textNode.textContent = "N/A";
+      optionLabel.append(checkbox, textNode);
+      optionsWrap.appendChild(optionLabel);
+    }
+
+    panel.appendChild(optionsWrap);
+    details.appendChild(panel);
+    filterWrap.appendChild(details);
+
+    function updateSummary() {
+      const values = getSelectFilterValues(state.columnFilters[col], col);
+      if (!values.length && !state.columnFilters[col].includeNA) {
+        summaryLabel.textContent = t("filterAny");
+        summaryCount.textContent = "";
+        return;
+      }
+      if (values.length <= 2) {
+        summaryLabel.textContent = values.join(", ") || t("filterAny");
+      } else {
+        summaryLabel.textContent = t("filterSelectedCount", { count: values.length });
+      }
+      summaryCount.textContent = state.columnFilters[col].includeNA ? " + N/A" : "";
+    }
+
+    updateSummary();
   } else if (filterState.kind === "date") {
     const input = document.createElement("input");
     input.type = "date";
@@ -1241,7 +1426,7 @@ function createColumnFilterControl(col) {
         updateFiltersPanelVisibility();
       });
       labelNA.appendChild(check);
-      labelNA.appendChild(document.createTextNode(" N/A"));
+      labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
       filterWrap.appendChild(labelNA);
     }
   } else if (filterState.kind === "range") {
@@ -1251,7 +1436,7 @@ function createColumnFilterControl(col) {
     if (meta.min === null || meta.max === null) {
       const info = document.createElement("p");
       info.className = "filter-card-empty";
-      info.textContent = "No numeric data";
+      info.textContent = t("filterNoNumeric");
       filterWrap.appendChild(info);
 
       if (meta.hasNA) {
@@ -1267,7 +1452,7 @@ function createColumnFilterControl(col) {
           updateFiltersPanelVisibility();
         });
         labelNA.appendChild(check);
-        labelNA.appendChild(document.createTextNode(" N/A"));
+        labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
         filterWrap.appendChild(labelNA);
       }
 
@@ -1285,17 +1470,17 @@ function createColumnFilterControl(col) {
     const values = document.createElement("div");
     values.className = "range-filter-values";
     const minLabel = document.createElement("span");
+    minLabel.className = "range-pill";
     const maxLabel = document.createElement("span");
-    const syncLabels = () => {
-      minLabel.textContent = `Min: ${Math.round(state.columnFilters[col].min ?? minValue).toLocaleString()}`;
-      maxLabel.textContent = `Max: ${Math.round(state.columnFilters[col].max ?? maxValue).toLocaleString()}`;
-    };
+    maxLabel.className = "range-pill";
     values.append(minLabel, maxLabel);
     filterWrap.appendChild(values);
 
+    const rangeShell = document.createElement("div");
+    rangeShell.className = "dual-range";
     const minRange = document.createElement("input");
     minRange.type = "range";
-    minRange.className = "column-filter-range";
+    minRange.className = "column-filter-range is-min";
     minRange.min = String(minValue);
     minRange.max = String(maxValue);
     minRange.step = "1";
@@ -1303,34 +1488,74 @@ function createColumnFilterControl(col) {
 
     const maxRange = document.createElement("input");
     maxRange.type = "range";
-    maxRange.className = "column-filter-range";
+    maxRange.className = "column-filter-range is-max";
     maxRange.min = String(minValue);
     maxRange.max = String(maxValue);
     maxRange.step = "1";
     maxRange.value = String(filterState.max ?? maxValue);
 
-    minRange.addEventListener("input", () => {
-      const nextMin = Number(minRange.value);
-      const currentMax = Number(maxRange.value);
-      state.columnFilters[col].min = Math.min(nextMin, currentMax);
-      minRange.value = String(state.columnFilters[col].min);
+    const numberInputs = document.createElement("div");
+    numberInputs.className = "range-number-inputs";
+    const minNumber = document.createElement("input");
+    minNumber.type = "number";
+    minNumber.className = "column-filter-input range-number";
+    minNumber.min = String(minValue);
+    minNumber.max = String(maxValue);
+    const maxNumber = document.createElement("input");
+    maxNumber.type = "number";
+    maxNumber.className = "column-filter-input range-number";
+    maxNumber.min = String(minValue);
+    maxNumber.max = String(maxValue);
+
+    function syncRangeUI() {
+      const currentMin = Number(state.columnFilters[col].min ?? minValue);
+      const currentMax = Number(state.columnFilters[col].max ?? maxValue);
+      minRange.value = String(currentMin);
+      maxRange.value = String(currentMax);
+      minNumber.value = String(Math.round(currentMin));
+      maxNumber.value = String(Math.round(currentMax));
+      minLabel.textContent = `${t("rangeMin")}: ${Math.round(currentMin).toLocaleString()}`;
+      maxLabel.textContent = `${t("rangeMax")}: ${Math.round(currentMax).toLocaleString()}`;
+      const total = Math.max(1, maxValue - minValue);
+      const startPct = ((currentMin - minValue) / total) * 100;
+      const endPct = ((currentMax - minValue) / total) * 100;
+      rangeShell.style.setProperty("--range-start", `${startPct}%`);
+      rangeShell.style.setProperty("--range-end", `${endPct}%`);
+    }
+
+    function updateRange(nextMin, nextMax) {
+      const clampedMin = Math.max(minValue, Math.min(nextMin, maxValue));
+      const clampedMax = Math.max(minValue, Math.min(nextMax, maxValue));
+      state.columnFilters[col].min = Math.min(clampedMin, clampedMax);
+      state.columnFilters[col].max = Math.max(clampedMin, clampedMax);
       state.page = 1;
-      syncLabels();
+      syncRangeUI();
       renderRows();
       updateFiltersPanelVisibility();
-    });
-    maxRange.addEventListener("input", () => {
-      const nextMax = Number(maxRange.value);
-      const currentMin = Number(minRange.value);
-      state.columnFilters[col].max = Math.max(nextMax, currentMin);
-      maxRange.value = String(state.columnFilters[col].max);
-      state.page = 1;
-      syncLabels();
-      renderRows();
-      updateFiltersPanelVisibility();
-    });
-    syncLabels();
-    filterWrap.append(minRange, maxRange);
+    }
+
+    minRange.addEventListener("input", () => updateRange(Number(minRange.value), Number(maxRange.value)));
+    maxRange.addEventListener("input", () => updateRange(Number(minRange.value), Number(maxRange.value)));
+    minNumber.addEventListener("change", () => updateRange(Number(minNumber.value || minValue), Number(maxNumber.value || maxValue)));
+    maxNumber.addEventListener("change", () => updateRange(Number(minNumber.value || minValue), Number(maxNumber.value || maxValue)));
+
+    rangeShell.append(minRange, maxRange);
+    filterWrap.appendChild(rangeShell);
+
+    const minWrap = document.createElement("label");
+    minWrap.className = "range-number-wrap";
+    const minCaption = document.createElement("span");
+    minCaption.textContent = t("rangeMin");
+    minWrap.append(minCaption, minNumber);
+    const maxWrap = document.createElement("label");
+    maxWrap.className = "range-number-wrap";
+    const maxCaption = document.createElement("span");
+    maxCaption.textContent = t("rangeMax");
+    maxWrap.append(maxCaption, maxNumber);
+    numberInputs.append(minWrap, maxWrap);
+    filterWrap.appendChild(numberInputs);
+
+    syncRangeUI();
 
     if (meta.hasNA) {
       const labelNA = document.createElement("label");
@@ -1345,7 +1570,7 @@ function createColumnFilterControl(col) {
         updateFiltersPanelVisibility();
       });
       labelNA.appendChild(check);
-      labelNA.appendChild(document.createTextNode(" N/A"));
+      labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
       filterWrap.appendChild(labelNA);
     }
   } else {
@@ -1494,11 +1719,8 @@ async function fetchSnapshotManifest(forceRefresh = false) {
   for (const endpoint of SNAPSHOT_MANIFEST_CANDIDATES) {
     try {
       const reqOptions = { headers: { Accept: "application/json" } };
-      const requestEndpoint = forceRefresh && endpoint.includes("/api/calls")
-        ? `${endpoint}${endpoint.includes("?") ? "&" : "?"}refresh=1`
-        : endpoint;
       if (forceRefresh) reqOptions.cache = "no-store";
-      const res = await fetchWithTimeout(requestEndpoint, reqOptions);
+      const res = await fetchWithTimeout(endpoint, reqOptions);
       if (!res.ok) continue;
       const data = await readJsonIfPossible(res, false);
       if (!data || !Array.isArray(data.parts)) continue;
@@ -1557,10 +1779,7 @@ async function fetchSnapshotPayload(forceRefresh = false) {
     try {
       const reqOptions = { headers: { Accept: "application/json" } };
       if (forceRefresh) reqOptions.cache = "no-store";
-      const requestEndpoint = forceRefresh && endpoint.includes("/api/calls")
-        ? `${endpoint}${endpoint.includes("?") ? "&" : "?"}refresh=1`
-        : endpoint;
-      const res = await fetchWithTimeout(requestEndpoint, reqOptions);
+      const res = await fetchWithTimeout(endpoint, reqOptions);
       if (!res.ok) continue;
       const data = await readJsonIfPossible(res);
       if (!data || !Array.isArray(data.items)) continue;
@@ -1705,7 +1924,12 @@ async function handleRefreshClick() {
   updateRefreshButtonCooldownState();
 
   try {
-    refs.statusText.textContent = t("statusLoading");
+    // Request a persistent JSON rebuild through GitHub Actions.
+    // Do not reconcile or delete browser rows from live API responses.
+    await triggerPersistentSnapshotRefresh();
+
+    // Re-read the deployed JSON snapshot with no-store. If Vercel has not
+    // redeployed yet, the current dataset remains stable.
     await loadSnapshot(true, state.page, { preservePosition: true });
   } finally {
     updateRefreshButtonCooldownState();

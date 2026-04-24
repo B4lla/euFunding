@@ -1,16 +1,19 @@
+const fs = require("fs/promises");
+const path = require("path");
+
 const CONFIG = {
   SEARCH_URL: "https://api.tech.ec.europa.eu/search-api/prod/rest/search",
   API_KEY: "SEDIA",
   SEARCH_TEXT: "***",
   MAX_SEARCH_LENGTH: 120,
   DEFAULT_PAGE_SIZE: 25,
-  MAX_PAGE_SIZE: 1000,
-  LIVE_FETCH_PAGE_SIZE: Number.parseInt(process.env.EU_API_PAGE_SIZE || "50", 10),
-  LIVE_MAX_CALLS: Number.parseInt(process.env.EU_API_MAX_CALLS || "80", 10),
-  REQUEST_TIMEOUT_MS: Number.parseInt(process.env.EU_API_REQUEST_TIMEOUT_MS || "45000", 10),
-  REQUEST_RETRIES: Number.parseInt(process.env.EU_API_REQUEST_RETRIES || "4", 10),
-  REQUEST_RETRY_DELAY_MS: Number.parseInt(process.env.EU_API_REQUEST_RETRY_DELAY_MS || "1500", 10),
-  CACHE_TTL_MS: Number.parseInt(process.env.EU_API_CACHE_TTL_SECONDS || String(30 * 60), 10) * 1000,
+  MAX_PAGE_SIZE: 100,
+  REQUEST_TIMEOUT_MS: 6000,
+  CACHE_TTL_MS: 12 * 60 * 60 * 1000,
+  VERIFY_CACHE_TTL_MS: 30 * 60 * 1000,
+  MAX_VERIFY_CODES: 30,
+  VERIFY_PAGE_SIZE: 5,
+  VERIFY_CONCURRENCY: 5,
 };
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 const SEARCH_COLUMNS = [
@@ -49,8 +52,8 @@ const ACTION_TYPE_CODE_MAP = {
 };
 
 const STATE = {
-  datasetCache: null,
-  datasetPromise: null,
+  memoryCache: new Map(),
+  verifyCache: new Map(),
 };
 
 module.exports = async function handler(req, res) {
@@ -58,49 +61,172 @@ module.exports = async function handler(req, res) {
     return writeJson(res, 405, { error: "Method not allowed" }, "none");
   }
 
-  const query = req.query || {};
-  const forceRefresh = isTruthyFlag(query.refresh);
-  const wantsAll = isTruthyFlag(query.all);
-  const pagination = parsePagination(query);
-  const searchText = parseSearchText(query);
-
-  try {
-    const dataset = await getLiveDataset(forceRefresh);
-    const filteredItems = searchText ? dataset.items.filter((row) => rowMatchesSearch(row, searchText)) : dataset.items;
-    const total = filteredItems.length;
-    const totalPages = Math.max(1, Math.ceil(Math.max(total, 1) / pagination.pageSize));
-    const safePage = Math.min(Math.max(pagination.page, 1), totalPages);
-    const pageItems = wantsAll
-      ? filteredItems
-      : filteredItems.slice((safePage - 1) * pagination.pageSize, safePage * pagination.pageSize);
-
-    return writePayload(req, res, {
-      generatedAt: dataset.generatedAt,
-      source: forceRefresh ? "EU Funding & Tenders Search API (live refresh)" : "EU Funding & Tenders Search API (30 min cache)",
-      query: searchText,
-      total,
-      page: wantsAll ? 1 : safePage,
-      pageSize: wantsAll ? total || pagination.pageSize : pagination.pageSize,
-      totalPages: wantsAll ? 1 : totalPages,
-      limits: {
-        pageSize: CONFIG.LIVE_FETCH_PAGE_SIZE,
-        apiPageSize: CONFIG.LIVE_FETCH_PAGE_SIZE,
-        apiCallsUsed: dataset.apiCallsUsed,
-        apiReportedTotal: dataset.apiReportedTotal,
-        apiReportedPages: dataset.apiReportedPages,
-        cacheTtlMs: CONFIG.CACHE_TTL_MS,
-        searchText: searchText || CONFIG.SEARCH_TEXT,
-        programmePeriod: PROGRAMME_PERIOD,
-      },
-      items: pageItems,
-    }, forceRefresh ? "live-refresh" : "live-cache");
-  } catch (error) {
-    return writeJson(res, 503, {
-      error: "Could not load live EU calls",
-      message: error && error.message ? error.message : String(error),
-    }, "live-error");
+  if (isTruthyFlag(req.query && req.query.verify)) {
+    const payload = await verifyRequestedCodes(req.query || {});
+    return writeJson(res, 200, payload, payload.source || "live-verify");
   }
+
+  const pagination = parsePagination(req.query || {});
+  const searchText = parseSearchText(req.query || {});
+  const wantsRefresh = isTruthyFlag(req.query && req.query.refresh);
+  const cacheKey = buildCacheKey(pagination.page, pagination.pageSize, searchText);
+
+  if (!wantsRefresh) {
+    const cached = readMemoryCache(cacheKey);
+    if (cached) {
+      return writePayload(req, res, cached, "memory-cache");
+    }
+
+    const snapshot = await readSnapshotFile();
+    if (snapshot && snapshot.items.length > 0) {
+      const payload = paginateSnapshotPayload(snapshot, pagination.page, pagination.pageSize, snapshot.source || "Snapshot JSON", searchText);
+      setMemoryCache(cacheKey, payload);
+      return writePayload(req, res, payload, "snapshot");
+    }
+  }
+
+  const live = await fetchLivePage(pagination.page, pagination.pageSize, searchText);
+  if (live) {
+    setMemoryCache(cacheKey, live);
+    return writePayload(req, res, live, "live");
+  }
+
+  const snapshot = await readSnapshotFile();
+
+  if (snapshot) {
+    const payload = paginateSnapshotPayload(snapshot, pagination.page, pagination.pageSize, snapshot.source || "Snapshot JSON", searchText);
+    setMemoryCache(cacheKey, payload);
+    return writePayload(req, res, payload, "snapshot-fallback");
+  }
+
+  return writeJson(res, 503, { error: "No data source available" }, "error");
 };
+
+async function verifyRequestedCodes(query) {
+  const codes = parseCodes(query.codes || query.code || "").slice(0, CONFIG.MAX_VERIFY_CODES);
+  if (codes.length === 0) {
+    return {
+      generatedAt: new Date().toISOString(),
+      source: "live-verify",
+      existingCodes: [],
+      missingCodes: [],
+      rows: [],
+      total: 0,
+      limits: { apiCallsUsed: 0, maxVerifyCodes: CONFIG.MAX_VERIFY_CODES },
+    };
+  }
+
+  const results = await mapLimit(codes, CONFIG.VERIFY_CONCURRENCY, verifySingleCode);
+  const existingCodes = [];
+  const missingCodes = [];
+  const rows = [];
+  let apiCallsUsed = 0;
+
+  for (const result of results) {
+    apiCallsUsed += result.apiCallsUsed || 0;
+    if (result.exists) {
+      existingCodes.push(result.code);
+      if (result.row) rows.push(result.row);
+    } else {
+      missingCodes.push(result.code);
+    }
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "live-verify",
+    existingCodes,
+    missingCodes,
+    rows,
+    total: existingCodes.length,
+    limits: {
+      apiCallsUsed,
+      maxVerifyCodes: CONFIG.MAX_VERIFY_CODES,
+      verifyConcurrency: CONFIG.VERIFY_CONCURRENCY,
+      cacheTtlMs: CONFIG.VERIFY_CACHE_TTL_MS,
+    },
+  };
+}
+
+function parseCodes(value) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(value || "").split(/[\n,;|]+/)) {
+    const code = String(raw || "").trim();
+    if (!code) continue;
+    const key = code.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(code);
+  }
+  return out;
+}
+
+async function mapLimit(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(limit || 1, items.length));
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const current = nextIndex;
+      nextIndex += 1;
+      results[current] = await mapper(items[current]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
+}
+
+function readVerifyCache(code) {
+  const key = String(code || "").toLowerCase();
+  const entry = STATE.verifyCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    STATE.verifyCache.delete(key);
+    return null;
+  }
+  return entry.payload;
+}
+
+function setVerifyCache(code, payload) {
+  const key = String(code || "").toLowerCase();
+  STATE.verifyCache.set(key, {
+    expiresAt: Date.now() + CONFIG.VERIFY_CACHE_TTL_MS,
+    payload,
+  });
+}
+
+async function verifySingleCode(code) {
+  const cached = readVerifyCache(code);
+  if (cached) return { ...cached, apiCallsUsed: 0 };
+
+  const result = await fetchPage(1, CONFIG.VERIFY_PAGE_SIZE, CONFIG.REQUEST_TIMEOUT_MS, code);
+  const normalizedCode = String(code || "").trim().toLowerCase();
+  let row = null;
+
+  if (result && Array.isArray(result.items)) {
+    for (const item of result.items) {
+      const candidate = normalizeItem(item);
+      if (!candidate) continue;
+      if (String(candidate["Topic code"] || "").trim().toLowerCase() === normalizedCode) {
+        row = candidate;
+        break;
+      }
+    }
+  }
+
+  const payload = {
+    code,
+    exists: Boolean(row),
+    row,
+    apiCallsUsed: 1,
+  };
+  setVerifyCache(code, payload);
+  return payload;
+}
+
 
 function isTruthyFlag(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -127,8 +253,95 @@ function normalizeSearchText(value) {
   return String(value ?? "").trim().slice(0, CONFIG.MAX_SEARCH_LENGTH);
 }
 
+function buildCacheKey(page, pageSize, searchText) {
+  return `${page}:${pageSize}:${String(searchText || "").toLowerCase()}`;
+}
+
+function readMemoryCache(cacheKey) {
+  const entry = STATE.memoryCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    STATE.memoryCache.delete(cacheKey);
+    return null;
+  }
+  return entry.payload;
+}
+
+function setMemoryCache(cacheKey, payload) {
+  STATE.memoryCache.set(cacheKey, {
+    expiresAt: Date.now() + CONFIG.CACHE_TTL_MS,
+    payload,
+  });
+}
+
+async function readSnapshotFile() {
+  const candidates = [
+    path.join(process.cwd(), "data", "calls.json"),
+    path.join(process.cwd(), "public", "data", "calls.json"),
+    path.join("/var/task", "data", "calls.json"),
+    path.join("/var/task", "public", "data", "calls.json"),
+  ];
+
+  for (const p of candidates) {
+    try {
+      const raw = await fs.readFile(p, "utf8");
+      const json = JSON.parse(raw);
+      if (!json || typeof json !== "object") continue;
+      if (!Array.isArray(json.items)) json.items = [];
+      if (!json.generatedAt) json.generatedAt = new Date().toISOString();
+      return json;
+    } catch {
+      // try next path
+    }
+  }
+
+  const manifestCandidates = [
+    path.join(process.cwd(), "data", "calls.manifest.json"),
+    path.join(process.cwd(), "public", "data", "calls.manifest.json"),
+    path.join("/var/task", "data", "calls.manifest.json"),
+    path.join("/var/task", "public", "data", "calls.manifest.json"),
+  ];
+
+  for (const manifestPath of manifestCandidates) {
+    try {
+      const raw = await fs.readFile(manifestPath, "utf8");
+      const manifest = JSON.parse(raw);
+      if (!manifest || typeof manifest !== "object" || !Array.isArray(manifest.parts)) continue;
+
+      const baseDir = path.dirname(manifestPath);
+      const collectedItems = [];
+
+      for (const part of manifest.parts) {
+        const partPathRaw = String(part.path || part.file || part.url || "").trim();
+        if (!partPathRaw) continue;
+
+        const normalized = partPathRaw.replace(/^\/+/, "").replace(/^data\//i, "");
+        const chunkPath = path.join(baseDir, normalized);
+        const chunkRaw = await fs.readFile(chunkPath, "utf8");
+        const chunkJson = JSON.parse(chunkRaw);
+        if (chunkJson && Array.isArray(chunkJson.items)) {
+          collectedItems.push(...chunkJson.items);
+        }
+      }
+
+      return {
+        generatedAt: manifest.generatedAt || new Date().toISOString(),
+        source: manifest.source || "Snapshot chunks",
+        total: Number(manifest.total || collectedItems.length || 0),
+        limits: manifest.limits || {},
+        items: collectedItems,
+      };
+    } catch {
+      // try next manifest
+    }
+  }
+
+  return null;
+}
+
 function rowMatchesSearch(row, searchText) {
   if (!searchText) return true;
+
   const query = String(searchText).toLowerCase();
   for (const col of SEARCH_COLUMNS) {
     if (String(row[col] || "").toLowerCase().includes(query)) return true;
@@ -136,40 +349,63 @@ function rowMatchesSearch(row, searchText) {
   return false;
 }
 
-function readDatasetCache() {
-  const entry = STATE.datasetCache;
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    STATE.datasetCache = null;
-    return null;
-  }
-  return entry.payload;
-}
+function paginateSnapshotPayload(snapshot, page, pageSize, source, searchText = "") {
+  const allItems = Array.isArray(snapshot.items) ? snapshot.items : [];
+  const filteredItems = searchText ? allItems.filter((row) => rowMatchesSearch(row, searchText)) : allItems;
+  const total = filteredItems.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(page, 1), totalPages);
+  const start = (safePage - 1) * pageSize;
+  const end = start + pageSize;
 
-function setDatasetCache(payload) {
-  STATE.datasetCache = {
-    expiresAt: Date.now() + CONFIG.CACHE_TTL_MS,
-    payload,
+  return {
+    generatedAt: snapshot.generatedAt || new Date().toISOString(),
+    source,
+    query: searchText,
+    total,
+    page: safePage,
+    pageSize,
+    totalPages,
+    limits: {
+      ...(snapshot.limits && typeof snapshot.limits === "object" ? snapshot.limits : {}),
+      pageSize,
+      searchText: searchText || CONFIG.SEARCH_TEXT,
+      programmePeriod: PROGRAMME_PERIOD,
+      apiCallsUsed: 0,
+      totalPages,
+    },
+    items: filteredItems.slice(start, end),
   };
 }
 
-async function getLiveDataset(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cached = readDatasetCache();
-    if (cached) return cached;
-    if (STATE.datasetPromise) return STATE.datasetPromise;
+async function fetchLivePage(pageNumber, pageSize, searchText = "") {
+  const result = await fetchPage(pageNumber, pageSize, CONFIG.REQUEST_TIMEOUT_MS, searchText);
+  if (!result) return null;
+
+  const rows = [];
+  for (const item of result.items) {
+    const row = normalizeItem(item);
+    if (!row) continue;
+    rows.push(row);
   }
 
-  STATE.datasetPromise = buildLiveDataset()
-    .then((payload) => {
-      setDatasetCache(payload);
-      return payload;
-    })
-    .finally(() => {
-      STATE.datasetPromise = null;
-    });
-
-  return STATE.datasetPromise;
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "EU Funding & Tenders Search API (SEDIA)",
+    query: searchText,
+    total: result.totalResults,
+    page: pageNumber,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(result.totalResults / pageSize)),
+    limits: {
+      pageSize,
+      searchText: searchText || CONFIG.SEARCH_TEXT,
+      programmePeriod: PROGRAMME_PERIOD,
+      apiCallsUsed: 1,
+      totalPages: Math.max(1, Math.ceil(result.totalResults / pageSize)),
+    },
+    items: rows,
+  };
 }
 
 function buildSearchQuery() {
@@ -184,69 +420,7 @@ function buildSearchQuery() {
   };
 }
 
-async function buildLiveDataset() {
-  const pageSize = Math.max(1, Math.min(CONFIG.LIVE_FETCH_PAGE_SIZE || 50, 100));
-  const first = await fetchPage(1, pageSize, CONFIG.REQUEST_TIMEOUT_MS, CONFIG.SEARCH_TEXT);
-  if (!first) throw new Error("The first EU API page failed");
-
-  const reportedTotal = Number(first.totalResults || first.items.length || 0);
-  const reportedPages = Math.max(1, Math.ceil(Math.max(reportedTotal, first.items.length, 1) / pageSize));
-  const maxPages = Math.min(reportedPages, CONFIG.LIVE_MAX_CALLS);
-  const items = [];
-  let apiCallsUsed = 1;
-
-  appendNormalizedItems(items, first.items, 0);
-
-  for (let page = 2; page <= maxPages; page += 1) {
-    const result = await fetchPage(page, pageSize, CONFIG.REQUEST_TIMEOUT_MS, CONFIG.SEARCH_TEXT);
-    apiCallsUsed += 1;
-    if (!result || !Array.isArray(result.items)) {
-      throw new Error(`EU API page ${page}/${maxPages} failed`);
-    }
-    appendNormalizedItems(items, result.items, items.length);
-  }
-
-  if (reportedTotal > 0 && items.length < Math.floor(reportedTotal * 0.95)) {
-    throw new Error(`Fetched ${items.length} rows, but the EU API reported ${reportedTotal}. Refusing to publish partial live data.`);
-  }
-
-  return {
-    generatedAt: new Date().toISOString(),
-    apiReportedTotal: reportedTotal,
-    apiReportedPages: reportedPages,
-    apiCallsUsed,
-    items,
-  };
-}
-
-function appendNormalizedItems(out, rawItems, offset) {
-  if (!Array.isArray(rawItems)) return;
-  for (const item of rawItems) {
-    const row = normalizeItem(item);
-    if (!row) continue;
-    row._apiOrdinal = offset + out.length + 1;
-    out.push(row);
-  }
-}
-
 async function fetchPage(pageNumber, pageSize, timeoutMs, searchText = "") {
-  let lastError = null;
-  for (let attempt = 1; attempt <= Math.max(1, CONFIG.REQUEST_RETRIES); attempt += 1) {
-    try {
-      const result = await fetchPageOnce(pageNumber, pageSize, timeoutMs, searchText);
-      if (result) return result;
-      lastError = new Error(`Empty response for page ${pageNumber}`);
-    } catch (error) {
-      lastError = error;
-    }
-    if (attempt < CONFIG.REQUEST_RETRIES) {
-      await sleep(CONFIG.REQUEST_RETRY_DELAY_MS * attempt);
-    }
-  }
-  throw lastError || new Error(`Failed to fetch page ${pageNumber}`);
-}
-
-async function fetchPageOnce(pageNumber, pageSize, timeoutMs, searchText = "") {
   const params = new URLSearchParams({
     apiKey: CONFIG.API_KEY,
     text: searchText || CONFIG.SEARCH_TEXT,
@@ -264,16 +438,26 @@ async function fetchPageOnce(pageNumber, pageSize, timeoutMs, searchText = "") {
     body,
   }, timeoutMs);
 
-  if (!res.ok) {
-    throw new Error(`EU API page ${pageNumber} returned HTTP ${res.status}`);
-  }
+  if (!res || !res.ok) return null;
 
-  const data = await res.json();
-  const rawItems = Array.isArray(data.results) ? data.results : Array.isArray(data.content) ? data.content : [];
-  return {
-    items: rawItems,
-    totalResults: Number(data.totalResults || data.total || rawItems.length || 0),
-  };
+  try {
+    const data = await res.json();
+    if (Array.isArray(data.results)) {
+      return {
+        items: data.results,
+        totalResults: Number(data.totalResults || data.total || data.results.length || 0),
+      };
+    }
+    if (Array.isArray(data.content)) {
+      return {
+        items: data.content,
+        totalResults: Number(data.totalResults || data.total || data.content.length || 0),
+      };
+    }
+    return { items: [], totalResults: 0 };
+  } catch {
+    return null;
+  }
 }
 
 async function fetchWithTimeout(url, options, timeoutMs) {
@@ -281,13 +465,11 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: controller.signal });
+  } catch {
+    return null;
   } finally {
     clearTimeout(timer);
   }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms || 0)));
 }
 
 function normalizeItem(item) {
