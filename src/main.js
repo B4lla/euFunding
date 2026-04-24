@@ -1658,33 +1658,52 @@ async function fetchSnapshotPayload(forceRefresh = false) {
 
 async function fetchAllApiRows(forceRefresh = false) {
   const query = refs.searchInput.value.trim();
-  const firstUrl = buildEndpointUrl("/api/calls", 1, forceRefresh);
-  const firstRes = await fetchWithTimeout(firstUrl, { headers: { Accept: "application/json" }, cache: forceRefresh ? "no-store" : "default" });
+
+  const buildLivePageUrl = (page) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(EXPORT_FETCH_PAGE_SIZE),
+    });
+    if (query) params.set("q", query);
+    if (forceRefresh) params.set("refresh", "1");
+    return "/api/calls?" + params.toString();
+  };
+
+  const firstRes = await fetchWithTimeout(buildLivePageUrl(1), {
+    headers: { Accept: "application/json" },
+    cache: forceRefresh ? "no-store" : "default",
+  });
   if (!firstRes.ok) return null;
+
   const firstData = await readJsonIfPossible(firstRes);
   if (!firstData || !Array.isArray(firstData.items)) return null;
 
   const items = [...firstData.items];
   const totalPages = Math.max(1, Number(firstData.totalPages || 1));
   const cappedPages = Math.min(totalPages, 200);
+
   for (let page = 2; page <= cappedPages; page += 1) {
-    const pageUrl = `/api/calls?page=${page}&pageSize=${EXPORT_FETCH_PAGE_SIZE}${query ? `&q=${encodeURIComponent(query)}` : ""}${forceRefresh ? "&refresh=1" : ""}`;
-    const pageRes = await fetchWithTimeout(pageUrl, { headers: { Accept: "application/json" }, cache: forceRefresh ? "no-store" : "default" });
+    const pageRes = await fetchWithTimeout(buildLivePageUrl(page), {
+      headers: { Accept: "application/json" },
+      cache: forceRefresh ? "no-store" : "default",
+    });
     if (!pageRes.ok) break;
+
     const pageData = await readJsonIfPossible(pageRes);
-    if (!pageData || !Array.isArray(pageData.items)) break;
+    if (!pageData || !Array.isArray(pageData.items) || pageData.items.length === 0) break;
     items.push(...pageData.items);
   }
+
+  const dedupedItems = dedupeRows(items);
 
   return {
     ...firstData,
     page: 1,
-    total: items.length,
-    totalPages: Math.max(1, Math.ceil(items.length / (state.pageSize || PAGE_SIZE))),
-    items,
+    total: dedupedItems.length,
+    totalPages: Math.max(1, Math.ceil(dedupedItems.length / (state.pageSize || PAGE_SIZE))),
+    items: dedupedItems,
   };
 }
-
 function getStoredTimestamp(key) {
   const value = Number(storageGet(key) || 0);
   return Number.isFinite(value) ? value : 0;
@@ -2015,24 +2034,33 @@ refs.exportXlsxBtn.addEventListener("click", exportXlsx);
 if (refs.themeToggleBtn) {
   refs.themeToggleBtn.addEventListener("click", toggleTheme);
 }
+function goToLocalPage(nextPage) {
+  const safePage = Math.min(Math.max(Number(nextPage) || 1, 1), state.totalPages || 1);
+  if (safePage === state.page) return;
+
+  state.page = safePage;
+  renderRows();
+  reconcileCurrentPageWithLive().catch(() => {});
+}
+
 refs.prevPageBtn.addEventListener("click", () => {
   if (state.page <= 1) return;
-  loadSnapshot(false, state.page - 1);
+  goToLocalPage(state.page - 1);
 });
 refs.nextPageBtn.addEventListener("click", () => {
   if (state.page >= state.totalPages) return;
-  loadSnapshot(false, state.page + 1);
+  goToLocalPage(state.page + 1);
 });
 if (refs.prevPageBtnBottom) {
   refs.prevPageBtnBottom.addEventListener("click", () => {
     if (state.page <= 1) return;
-    loadSnapshot(false, state.page - 1);
+    goToLocalPage(state.page - 1);
   });
 }
 if (refs.nextPageBtnBottom) {
   refs.nextPageBtnBottom.addEventListener("click", () => {
     if (state.page >= state.totalPages) return;
-    loadSnapshot(false, state.page + 1);
+    goToLocalPage(state.page + 1);
   });
 }
 

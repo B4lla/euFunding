@@ -6,7 +6,9 @@ const API_KEY = "SEDIA";
 const SEARCH_TEXT = "***";
 const PAGE_SIZE = 100;
 const MAX_API_CALLS = 20;
-const REQUEST_TIMEOUT_MS = 4000;
+const REQUEST_TIMEOUT_MS = Number(process.env.EU_API_REQUEST_TIMEOUT_MS || 30000);
+const REQUEST_RETRIES = Number(process.env.EU_API_REQUEST_RETRIES || 3);
+const REQUEST_RETRY_DELAY_MS = Number(process.env.EU_API_REQUEST_RETRY_DELAY_MS || 2000);
 const PROGRAMME_PERIOD = "2021 - 2027";
 const STATUS_FORTHCOMING = "31094501";
 const STATUS_OPEN = "31094502";
@@ -29,14 +31,37 @@ const ACTION_TYPE_CODE_MAP = {
   "8": "Grant",
 };
 
-async function fetchWithTimeout(url, options, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(url, options, timeoutMs, retries = REQUEST_RETRIES) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      lastError = error;
+      const isAbort = error && (error.name === "AbortError" || String(error.message || "").toLowerCase().includes("aborted"));
+      const shouldRetry = attempt < retries && isAbort;
+
+      if (!shouldRetry) {
+        throw error;
+      }
+
+      const delay = REQUEST_RETRY_DELAY_MS * (attempt + 1);
+      console.warn(`Request timed out, retrying ${attempt + 1}/${retries} after ${delay}ms...`);
+      await sleep(delay);
+    } finally {
+      clearTimeout(timer);
+    }
   }
+
+  throw lastError || new Error("Request failed");
 }
 
 function buildSearchQuery() {
@@ -496,8 +521,18 @@ async function fetchPage(pageNumber) {
   body.append("query", new Blob([JSON.stringify(buildSearchQuery())], { type: "application/json" }));
   body.append("languages", new Blob([JSON.stringify(["en"])], { type: "application/json" }));
 
-  const res = await fetchWithTimeout(`${SEARCH_URL}?${params.toString()}`, { method: "POST", body }, REQUEST_TIMEOUT_MS);
-  if (!res || !res.ok) return { items: [], totalResults: 0 };
+  let res;
+  try {
+    res = await fetchWithTimeout(`${SEARCH_URL}?${params.toString()}`, { method: "POST", body }, REQUEST_TIMEOUT_MS);
+  } catch (error) {
+    console.warn(`Fetch page ${pageNumber} failed after retries: ${error.message || error}`);
+    return { items: [], totalResults: 0, failed: true };
+  }
+
+  if (!res || !res.ok) {
+    console.warn(`Fetch page ${pageNumber} returned HTTP ${res ? res.status : "unknown"}`);
+    return { items: [], totalResults: 0, failed: true };
+  }
 
   try {
     const data = await res.json();
@@ -526,7 +561,12 @@ async function main() {
     if (page === 1 && result.totalResults > 0) {
       totalPages = Math.ceil(result.totalResults / PAGE_SIZE);
     }
-    if (!result.items.length) break;
+    if (!result.items.length) {
+      if (result.failed) {
+        console.warn(`Stopping snapshot refresh at page ; keeping  rows fetched so far.`);
+      }
+      break;
+    }
 
     for (const item of result.items) {
       const row = normalize(item);
