@@ -31,11 +31,19 @@ const EXPORT_FETCH_PAGE_SIZE = 100;
 const REQUEST_TIMEOUT_MS = 20000;
 const THEME_KEY = "eu-dashboard-theme";
 const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const MANUAL_REFRESH_COOLDOWN_MS = 60 * 1000;
+const MANUAL_REFRESH_LAST_KEY = "eu-calls-manual-refresh-last";
+const PERSISTENT_REFRESH_CLIENT_COOLDOWN_MS = 10 * 60 * 1000;
+const PERSISTENT_REFRESH_LAST_KEY = "eu-calls-persistent-refresh-last";
+const LIVE_RECONCILE_COOLDOWN_MS = 30 * 60 * 1000;
+const LIVE_RECONCILE_MAX_CODES = 25;
+const LIVE_RECONCILE_CACHE_KEY = "eu-calls-live-reconcile-v1";
 
 let xlsxLoadPromise = null;
 let searchDebounceTimer = null;
 let autoRefreshTimerId = null;
 let autoRefreshInFlight = false;
+let refreshCooldownTimerId = null;
 
 const I18N = {
   en: {
@@ -44,6 +52,11 @@ const I18N = {
     language: "Language",
     searchPlaceholder: "Search by title, code, programme...",
     refresh: "Refresh live data",
+    refreshSnapshotStarted: "Snapshot update requested. If the JSON changes, GitHub will commit it and Vercel will redeploy automatically.",
+    refreshSnapshotSkipped: "Snapshot update was requested recently, so it was not started again.",
+    refreshCooldown: "Refresh available in {seconds}s",
+    refreshSnapshotNotConfigured: "Live data refreshed. Persistent JSON update is not configured yet.",
+    refreshSnapshotFailed: "Live data refreshed, but the persistent JSON update could not be started.",
     exportCsv: "Export CSV",
     exportXlsx: "Export Excel",
     statusLoading: "Loading data...",
@@ -86,6 +99,11 @@ const I18N = {
     language: "Limba",
     searchPlaceholder: "Cauta dupa titlu, cod, program...",
     refresh: "Actualizeaza date live",
+    refreshSnapshotStarted: "Actualizarea snapshot-ului a fost pornita. Daca JSON-ul se schimba, GitHub il va comite si Vercel va redeploya automat.",
+    refreshSnapshotSkipped: "Actualizarea snapshot-ului a fost ceruta recent, asa ca nu a fost pornita din nou.",
+    refreshCooldown: "Actualizare disponibila in {seconds}s",
+    refreshSnapshotNotConfigured: "Datele live au fost actualizate. Actualizarea persistenta a JSON-ului nu este configurata inca.",
+    refreshSnapshotFailed: "Datele live au fost actualizate, dar actualizarea persistenta a JSON-ului nu a putut porni.",
     exportCsv: "Export CSV",
     exportXlsx: "Export Excel",
     statusLoading: "Se incarca datele...",
@@ -144,6 +162,8 @@ const state = {
   filtersOpen: false,
   columnFilters: Object.create(null),
   filterMetadata: Object.create(null),
+  liveReconcileInFlight: false,
+  lastPayloadSource: "",
 };
 
 const refs = {
@@ -449,6 +469,130 @@ function loadLocalCache() {
   return parsed;
 }
 
+function readLiveReconcileCache() {
+  const parsed = safeParseJSON(storageGet(LIVE_RECONCILE_CACHE_KEY));
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+function writeLiveReconcileCache(cache) {
+  storageSet(LIVE_RECONCILE_CACHE_KEY, JSON.stringify(cache || {}));
+}
+
+function getTopicCode(row) {
+  return String(row && row["Topic code"] ? row["Topic code"] : "").trim();
+}
+
+function getCurrentVisiblePageRows() {
+  const rows = state.filteredRows && state.filteredRows.length ? state.filteredRows : getFilteredRows();
+  const start = state.showSelectedOnly ? 0 : (state.page - 1) * state.pageSize;
+  const end = state.showSelectedOnly ? rows.length : start + state.pageSize;
+  return rows.slice(start, end);
+}
+
+function shouldSkipLiveReconcile(codes) {
+  if (!codes.length) return true;
+  const cache = readLiveReconcileCache();
+  const now = Date.now();
+  const cacheKey = codes.slice().sort((a, b) => a.localeCompare(b)).join("|").toLowerCase();
+  const lastChecked = Number(cache[cacheKey] || 0);
+  if (Number.isFinite(lastChecked) && now - lastChecked < LIVE_RECONCILE_COOLDOWN_MS) {
+    return true;
+  }
+  cache[cacheKey] = now;
+  writeLiveReconcileCache(cache);
+  return false;
+}
+
+function mergeVerifiedRows(liveRows) {
+  if (!Array.isArray(liveRows) || liveRows.length === 0) return false;
+
+  const liveByCode = new Map();
+  for (const row of liveRows) {
+    const normalized = normalizeClientRow(row);
+    const code = getTopicCode(normalized).toLowerCase();
+    if (code) liveByCode.set(code, normalized);
+  }
+
+  if (liveByCode.size === 0) return false;
+
+  let changed = false;
+  state.allRows = state.allRows.map((row) => {
+    const replacement = liveByCode.get(getTopicCode(row).toLowerCase());
+    if (!replacement) return row;
+    changed = true;
+    return replacement;
+  });
+  state.rows = state.allRows;
+
+  for (const [key, selectedRow] of state.selectedRows.entries()) {
+    const replacement = liveByCode.get(getTopicCode(selectedRow).toLowerCase());
+    if (replacement) state.selectedRows.set(key, replacement);
+  }
+
+  return changed;
+}
+
+function removeMissingRows(missingCodes) {
+  if (!Array.isArray(missingCodes) || missingCodes.length === 0) return false;
+
+  const missing = new Set(missingCodes.map((code) => String(code || "").trim().toLowerCase()).filter(Boolean));
+  if (missing.size === 0) return false;
+
+  const before = state.allRows.length;
+  state.allRows = state.allRows.filter((row) => !missing.has(getTopicCode(row).toLowerCase()));
+  state.rows = state.allRows;
+  for (const [key, row] of state.selectedRows.entries()) {
+    if (missing.has(getTopicCode(row).toLowerCase())) {
+      state.selectedRows.delete(key);
+      state.selectedIds.delete(key);
+    }
+  }
+  return state.allRows.length !== before;
+}
+
+function markReconciledSource(source) {
+  const text = String(source || "").toLowerCase();
+  return text.includes("live") || text.includes("/api/calls");
+}
+
+async function reconcileCurrentPageWithLive(options = {}) {
+  if (state.liveReconcileInFlight) return;
+  if (markReconciledSource(state.lastPayloadSource) && !options.force) return;
+
+  const pageRows = getCurrentVisiblePageRows();
+  const codes = Array.from(new Set(pageRows.map(getTopicCode).filter(Boolean))).slice(0, LIVE_RECONCILE_MAX_CODES);
+  if (shouldSkipLiveReconcile(codes) && !options.force) return;
+
+  state.liveReconcileInFlight = true;
+  try {
+    const params = new URLSearchParams({
+      verify: "1",
+      codes: codes.join(","),
+    });
+    const res = await fetchWithTimeout(`/api/calls?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) return;
+    const payload = await readJsonIfPossible(res, false);
+    if (!payload) return;
+
+    const merged = mergeVerifiedRows(payload.rows);
+    const removed = removeMissingRows(payload.missingCodes);
+    if (merged || removed) {
+      state.filterMetadata = Object.create(null);
+      state.totalRows = state.allRows.length;
+      saveLocalCache();
+      renderFiltersPanel();
+      renderRows();
+    }
+  } catch {
+    // Keep the local/snapshot data if live verification is temporarily unavailable.
+  } finally {
+    state.liveReconcileInFlight = false;
+  }
+}
+
 function updateMetaText() {
   refs.updatedAt.textContent = state.generatedAt
     ? t("updatedAt", { date: new Date(state.generatedAt).toLocaleString() })
@@ -500,6 +644,7 @@ function applyPayload(payload, responseSource = "", requestedPage = 1) {
   }
   state.generatedAt = payload.generatedAt || "";
   state.source = payload.source || responseSource || "";
+  state.lastPayloadSource = responseSource || payload.source || "";
 
   state.pageSize = PAGE_SIZE;
 
@@ -512,6 +657,7 @@ function applyPayload(payload, responseSource = "", requestedPage = 1) {
 
   saveLocalCache();
   updateMetaText();
+  renderFiltersPanel();
   renderRows();
 }
 
@@ -992,6 +1138,7 @@ function applyLanguage() {
   refs.labelLanguage.textContent = t("language");
   refs.searchInput.placeholder = t("searchPlaceholder");
   refs.refreshBtn.textContent = t("refresh");
+  updateRefreshButtonCooldownState();
   refs.exportCsvBtn.textContent = t("exportCsv");
   refs.exportXlsxBtn.textContent = t("exportXlsx");
   refs.prevPageBtn.textContent = t("prev");
@@ -1538,6 +1685,95 @@ async function fetchAllApiRows(forceRefresh = false) {
   };
 }
 
+function getStoredTimestamp(key) {
+  const value = Number(storageGet(key) || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getRemainingCooldownMs(key, cooldownMs) {
+  const lastRunAt = getStoredTimestamp(key);
+  return Math.max(0, cooldownMs - (Date.now() - lastRunAt));
+}
+
+function updateRefreshButtonCooldownState() {
+  if (!refs.refreshBtn) return;
+
+  const remainingMs = getRemainingCooldownMs(MANUAL_REFRESH_LAST_KEY, MANUAL_REFRESH_COOLDOWN_MS);
+  if (remainingMs <= 0) {
+    refs.refreshBtn.disabled = false;
+    refs.refreshBtn.textContent = t("refresh");
+    if (refreshCooldownTimerId) {
+      clearTimeout(refreshCooldownTimerId);
+      refreshCooldownTimerId = null;
+    }
+    return;
+  }
+
+  const seconds = Math.ceil(remainingMs / 1000);
+  refs.refreshBtn.disabled = true;
+  refs.refreshBtn.textContent = t("refreshCooldown", { seconds });
+
+  if (refreshCooldownTimerId) clearTimeout(refreshCooldownTimerId);
+  refreshCooldownTimerId = setTimeout(updateRefreshButtonCooldownState, Math.min(1000, remainingMs));
+}
+
+async function triggerPersistentSnapshotRefresh() {
+  const remainingMs = getRemainingCooldownMs(PERSISTENT_REFRESH_LAST_KEY, PERSISTENT_REFRESH_CLIENT_COOLDOWN_MS);
+  if (remainingMs > 0) {
+    refs.statusText.textContent = t("refreshSnapshotSkipped");
+    return false;
+  }
+
+  try {
+    const res = await fetchWithTimeout("/api/refresh-snapshot", {
+      method: "POST",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    const payload = await readJsonIfPossible(res, false).catch(() => null);
+
+    if (payload && (payload.code === "refresh_recently_requested" || payload.code === "refresh_already_running")) {
+      storageSet(PERSISTENT_REFRESH_LAST_KEY, String(Date.now()));
+      refs.statusText.textContent = t("refreshSnapshotSkipped");
+      return true;
+    }
+
+    if (res.status === 501 || (payload && payload.code === "github_dispatch_not_configured")) {
+      refs.statusText.textContent = t("refreshSnapshotNotConfigured");
+      return false;
+    }
+
+    if (!res.ok || !payload || payload.ok !== true) {
+      refs.statusText.textContent = t("refreshSnapshotFailed");
+      return false;
+    }
+
+    storageSet(PERSISTENT_REFRESH_LAST_KEY, String(Date.now()));
+    refs.statusText.textContent = t("refreshSnapshotStarted");
+    return true;
+  } catch {
+    refs.statusText.textContent = t("refreshSnapshotFailed");
+    return false;
+  }
+}
+
+async function handleRefreshClick() {
+  if (getRemainingCooldownMs(MANUAL_REFRESH_LAST_KEY, MANUAL_REFRESH_COOLDOWN_MS) > 0) {
+    updateRefreshButtonCooldownState();
+    return;
+  }
+
+  storageSet(MANUAL_REFRESH_LAST_KEY, String(Date.now()));
+  updateRefreshButtonCooldownState();
+
+  try {
+    await loadSnapshot(true, state.page);
+    triggerPersistentSnapshotRefresh().catch(() => {});
+  } finally {
+    updateRefreshButtonCooldownState();
+  }
+}
+
 async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, options = {}) {
   const preservePosition = options && options.preservePosition === true;
   const scrollSnapshot = preservePosition ? captureScrollSnapshot() : null;
@@ -1576,6 +1812,7 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
     }
 
     applyPayload(payload, responseSource, targetPage);
+    reconcileCurrentPageWithLive({ force: forceRefresh }).catch(() => {});
   } catch (error) {
     const cachedPayload = loadLocalCache();
     if (cachedPayload && Array.isArray(cachedPayload.items) && cachedPayload.items.length) {
@@ -1765,7 +2002,8 @@ if (refs.filtersToggleBtn) {
 if (refs.clearFiltersBtn) {
   refs.clearFiltersBtn.addEventListener("click", clearAllColumnFilters);
 }
-refs.refreshBtn.addEventListener("click", () => loadSnapshot(true, state.page));
+refs.refreshBtn.addEventListener("click", handleRefreshClick);
+updateRefreshButtonCooldownState();
 if (refs.selectedOnlyBtn) {
   refs.selectedOnlyBtn.addEventListener("click", toggleSelectedOnly);
 }

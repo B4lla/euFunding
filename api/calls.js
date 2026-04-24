@@ -10,6 +10,10 @@ const CONFIG = {
   MAX_PAGE_SIZE: 100,
   REQUEST_TIMEOUT_MS: 6000,
   CACHE_TTL_MS: 12 * 60 * 60 * 1000,
+  VERIFY_CACHE_TTL_MS: 30 * 60 * 1000,
+  MAX_VERIFY_CODES: 30,
+  VERIFY_PAGE_SIZE: 5,
+  VERIFY_CONCURRENCY: 5,
 };
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 const SEARCH_COLUMNS = [
@@ -49,11 +53,17 @@ const ACTION_TYPE_CODE_MAP = {
 
 const STATE = {
   memoryCache: new Map(),
+  verifyCache: new Map(),
 };
 
 module.exports = async function handler(req, res) {
   if (req.method !== "GET") {
     return writeJson(res, 405, { error: "Method not allowed" }, "none");
+  }
+
+  if (isTruthyFlag(req.query && req.query.verify)) {
+    const payload = await verifyRequestedCodes(req.query || {});
+    return writeJson(res, 200, payload, payload.source || "live-verify");
   }
 
   const pagination = parsePagination(req.query || {});
@@ -91,6 +101,132 @@ module.exports = async function handler(req, res) {
 
   return writeJson(res, 503, { error: "No data source available" }, "error");
 };
+
+async function verifyRequestedCodes(query) {
+  const codes = parseCodes(query.codes || query.code || "").slice(0, CONFIG.MAX_VERIFY_CODES);
+  if (codes.length === 0) {
+    return {
+      generatedAt: new Date().toISOString(),
+      source: "live-verify",
+      existingCodes: [],
+      missingCodes: [],
+      rows: [],
+      total: 0,
+      limits: { apiCallsUsed: 0, maxVerifyCodes: CONFIG.MAX_VERIFY_CODES },
+    };
+  }
+
+  const results = await mapLimit(codes, CONFIG.VERIFY_CONCURRENCY, verifySingleCode);
+  const existingCodes = [];
+  const missingCodes = [];
+  const rows = [];
+  let apiCallsUsed = 0;
+
+  for (const result of results) {
+    apiCallsUsed += result.apiCallsUsed || 0;
+    if (result.exists) {
+      existingCodes.push(result.code);
+      if (result.row) rows.push(result.row);
+    } else {
+      missingCodes.push(result.code);
+    }
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "live-verify",
+    existingCodes,
+    missingCodes,
+    rows,
+    total: existingCodes.length,
+    limits: {
+      apiCallsUsed,
+      maxVerifyCodes: CONFIG.MAX_VERIFY_CODES,
+      verifyConcurrency: CONFIG.VERIFY_CONCURRENCY,
+      cacheTtlMs: CONFIG.VERIFY_CACHE_TTL_MS,
+    },
+  };
+}
+
+function parseCodes(value) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of String(value || "").split(/[\n,;|]+/)) {
+    const code = String(raw || "").trim();
+    if (!code) continue;
+    const key = code.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(code);
+  }
+  return out;
+}
+
+async function mapLimit(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(limit || 1, items.length));
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const current = nextIndex;
+      nextIndex += 1;
+      results[current] = await mapper(items[current]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
+}
+
+function readVerifyCache(code) {
+  const key = String(code || "").toLowerCase();
+  const entry = STATE.verifyCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    STATE.verifyCache.delete(key);
+    return null;
+  }
+  return entry.payload;
+}
+
+function setVerifyCache(code, payload) {
+  const key = String(code || "").toLowerCase();
+  STATE.verifyCache.set(key, {
+    expiresAt: Date.now() + CONFIG.VERIFY_CACHE_TTL_MS,
+    payload,
+  });
+}
+
+async function verifySingleCode(code) {
+  const cached = readVerifyCache(code);
+  if (cached) return { ...cached, apiCallsUsed: 0 };
+
+  const result = await fetchPage(1, CONFIG.VERIFY_PAGE_SIZE, CONFIG.REQUEST_TIMEOUT_MS, code);
+  const normalizedCode = String(code || "").trim().toLowerCase();
+  let row = null;
+
+  if (result && Array.isArray(result.items)) {
+    for (const item of result.items) {
+      const candidate = normalizeItem(item);
+      if (!candidate) continue;
+      if (String(candidate["Topic code"] || "").trim().toLowerCase() === normalizedCode) {
+        row = candidate;
+        break;
+      }
+    }
+  }
+
+  const payload = {
+    code,
+    exists: Boolean(row),
+    row,
+    apiCallsUsed: 1,
+  };
+  setVerifyCache(code, payload);
+  return payload;
+}
+
 
 function isTruthyFlag(value) {
   const normalized = String(value ?? "").trim().toLowerCase();

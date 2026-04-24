@@ -558,9 +558,53 @@ async function main() {
     items: rows,
   };
 
-  const outPath = path.join(__dirname, "..", "data", "calls.json");
-  await fs.writeFile(outPath, JSON.stringify(payload, null, 2), "utf8");
-  console.log(`Saved ${rows.length} records to data/calls.json`);
+  await writeSnapshotSet(path.join(__dirname, "..", "data"), payload);
+  await writeSnapshotSet(path.join(__dirname, "..", "public", "data"), payload);
+  console.log(`Saved ${rows.length} records to data/calls.json and public/data/calls.json`);
+}
+
+async function writeSnapshotSet(baseDir, payload) {
+  const chunkSize = 100;
+  const chunksDir = path.join(baseDir, "chunks");
+  await fs.mkdir(chunksDir, { recursive: true });
+
+  const existingFiles = await fs.readdir(chunksDir).catch(() => []);
+  await Promise.all(existingFiles
+    .filter((name) => /^calls\.part-\d+\.json$/i.test(name))
+    .map((name) => fs.unlink(path.join(chunksDir, name)).catch(() => null)));
+
+  await fs.writeFile(path.join(baseDir, "calls.json"), JSON.stringify(payload, null, 2), "utf8");
+
+  const parts = [];
+  for (let index = 0; index < payload.items.length; index += chunkSize) {
+    const chunkItems = payload.items.slice(index, index + chunkSize);
+    const partIndex = parts.length + 1;
+    const fileName = `calls.part-${String(partIndex).padStart(3, "0")}.json`;
+    const chunkPayload = {
+      generatedAt: payload.generatedAt,
+      source: payload.source,
+      index: partIndex,
+      count: chunkItems.length,
+      items: chunkItems,
+    };
+
+    await fs.writeFile(path.join(chunksDir, fileName), JSON.stringify(chunkPayload), "utf8");
+    parts.push({
+      index: partIndex,
+      count: chunkItems.length,
+      path: `data/chunks/${fileName}`,
+    });
+  }
+
+  const manifest = {
+    generatedAt: payload.generatedAt,
+    source: payload.source,
+    total: payload.items.length,
+    chunkSize,
+    parts,
+    limits: payload.limits,
+  };
+  await fs.writeFile(path.join(baseDir, "calls.manifest.json"), JSON.stringify(manifest), "utf8");
 }
 
 main().catch((error) => {

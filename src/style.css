@@ -444,7 +444,7 @@ select:focus,
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(320px, 1.2fr) repeat(5, auto);
+  grid-template-columns: minmax(280px, 1.2fr) repeat(5, auto);
   gap: 0.6rem;
   margin: 0.9rem 0;
   padding: 0.75rem;
@@ -640,7 +640,8 @@ select:focus,
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1560px;
+  min-width: 0;
+  table-layout: fixed;
 }
 
 thead th {
@@ -650,7 +651,7 @@ thead th {
   background: linear-gradient(180deg, var(--thead-bg-a) 0%, var(--thead-bg-b) 100%);
   border-bottom: 1px solid var(--line);
   text-align: left;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
@@ -737,9 +738,22 @@ thead th:nth-child(10) { min-width: 7.5rem; }
 thead th:nth-child(11) { min-width: 7.5rem; }
 thead th:nth-child(12) { min-width: 5rem; }
 
+/* Make table columns wrap so horizontal scroll is reduced */
+thead th,
+tbody td {
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Allow narrower column minimums (override fixed per-column min-widths) */
+thead th { min-width: 0; }
+
+.desc-cell { max-width: 28ch; }
+
 tbody td {
   border-bottom: 1px solid var(--table-row-line);
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   vertical-align: top;
   padding: 0.68rem 0.72rem;
 }
