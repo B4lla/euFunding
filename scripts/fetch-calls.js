@@ -550,20 +550,32 @@ async function fetchPage(pageNumber) {
 
 async function main() {
   const rows = [];
+  const seenCodes = new Set();
   let calls = 0;
   let totalPages = 1;
+  let expectedTotal = 0;
 
   for (let page = 1; page <= totalPages; page += 1) {
-    if (calls >= MAX_API_CALLS) break;
+    if (calls >= MAX_API_CALLS) {
+      throw new Error(`Stopped before all pages were fetched: hit MAX_API_CALLS=${MAX_API_CALLS} at page ${page}/${totalPages}. Snapshot was not overwritten.`);
+    }
 
     const result = await fetchPage(page);
     calls += 1;
-    if (page === 1 && result.totalResults > 0) {
-      totalPages = Math.ceil(result.totalResults / PAGE_SIZE);
+
+    if (page === 1) {
+      expectedTotal = Number(result.totalResults || 0);
+      totalPages = expectedTotal > 0 ? Math.ceil(expectedTotal / PAGE_SIZE) : 1;
+      console.log(`EU API reports ${expectedTotal} available calls across ${totalPages} pages.`);
     }
+
+    if (result.failed) {
+      throw new Error(`Fetch failed on page ${page}/${totalPages}. Snapshot was not overwritten.`);
+    }
+
     if (!result.items.length) {
-      if (result.failed) {
-        console.warn(`Stopping snapshot refresh at page ; keeping  rows fetched so far.`);
+      if (page <= totalPages && expectedTotal > rows.length) {
+        throw new Error(`Page ${page}/${totalPages} returned 0 items while ${expectedTotal} total calls were expected. Snapshot was not overwritten.`);
       }
       break;
     }
@@ -571,8 +583,16 @@ async function main() {
     for (const item of result.items) {
       const row = normalize(item);
       if (!row) continue;
+      const code = String(row["Topic code"] || "").trim().toLowerCase();
+      if (code && seenCodes.has(code)) continue;
+      if (code) seenCodes.add(code);
       rows.push(row);
     }
+  }
+
+  const minExpectedRows = expectedTotal > 0 ? Math.floor(expectedTotal * 0.98) : 1;
+  if (rows.length < minExpectedRows) {
+    throw new Error(`Fetched only ${rows.length} rows, but the API reported ${expectedTotal}. Snapshot was not overwritten to avoid publishing partial data.`);
   }
 
   rows.sort((a, b) => {
@@ -587,6 +607,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
     source: "EU Funding & Tenders Search API (SEDIA)",
     total: rows.length,
+    expectedTotal,
     limits: {
       pageSize: PAGE_SIZE,
       searchText: SEARCH_TEXT,
@@ -594,6 +615,7 @@ async function main() {
       maxApiCalls: MAX_API_CALLS,
       apiCallsUsed: calls,
       totalPages,
+      minExpectedRows,
     },
     items: rows,
   };

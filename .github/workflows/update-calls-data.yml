@@ -3,8 +3,8 @@ name: Update EU calls data
 on:
   workflow_dispatch:
   schedule:
-    # Runs every day at 06:10 UTC. Adjust if needed.
-    - cron: "10 6 * * *"
+    # Runs every 30 minutes. GitHub may delay scheduled jobs a few minutes.
+    - cron: "*/30 * * * *"
 
 permissions:
   contents: write

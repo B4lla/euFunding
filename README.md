@@ -152,3 +152,32 @@ Anti-spam protection is included in two places:
 - The persistent GitHub Actions dispatch has a 10 minute server-side cooldown by default. Change `GITHUB_DISPATCH_COOLDOWN_SECONDS` in Vercel if you want a different delay. During the cooldown, the endpoint returns success with `skipped: true` instead of starting another workflow run.
 
 If these variables are not set, the Refresh button still refreshes the live/browser data, but it will show that the persistent JSON update is not configured yet.
+
+## Stable pagination / refresh behavior
+
+Pagination is intentionally read-only: moving between pages never verifies or deletes rows in the browser. This prevents the visible total from shrinking page by page when the live API returns partial or inconsistent responses.
+
+The **Refresh live data** button requests the GitHub Actions snapshot update and reloads the deployed snapshot without rebuilding the whole dataset in the browser/Vercel function. The JSON is updated persistently only by `.github/workflows/update-calls-data.yml`; if the API download is incomplete, the workflow fails and does not overwrite the existing JSON.
+
+
+## Actualización automática del JSON
+
+Esta versión mantiene la navegación estable: cambiar de página nunca elimina ni reconcilia calls en memoria.
+
+El archivo `data/calls.json` se regenera únicamente mediante GitHub Actions:
+
+- Automáticamente cada 30 minutos (`.github/workflows/update-calls-data.yml`).
+- Bajo demanda cuando la web llama a `/api/refresh-snapshot` al pulsar **Refresh**.
+
+En Vercel deben existir estas variables de entorno en Production:
+
+```txt
+GITHUB_OWNER=usuario_u_organizacion
+GITHUB_REPO=nombre_del_repo
+GITHUB_BRANCH=main
+GITHUB_WORKFLOW_ID=update-calls-data.yml
+GITHUB_DISPATCH_COOLDOWN_SECONDS=600
+GITHUB_DISPATCH_TOKEN=github_pat_...
+```
+
+El script `scripts/fetch-calls.js` está protegido: si la API devuelve una descarga parcial, por ejemplo 623 de 790, el workflow falla y no sobrescribe el JSON bueno.

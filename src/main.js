@@ -51,12 +51,12 @@ const I18N = {
     period: "Funding period 2021-2027",
     language: "Language",
     searchPlaceholder: "Search by title, code, programme...",
-    refresh: "Refresh live data",
-    refreshSnapshotStarted: "Snapshot update requested. If the JSON changes, GitHub will commit it and Vercel will redeploy automatically.",
+    refresh: "Refresh JSON snapshot",
+    refreshSnapshotStarted: "Snapshot update requested. GitHub will rebuild the JSON and Vercel will redeploy automatically if there are changes.",
     refreshSnapshotSkipped: "Snapshot update was requested recently, so it was not started again.",
     refreshCooldown: "Refresh available in {seconds}s",
-    refreshSnapshotNotConfigured: "Live data refreshed. Persistent JSON update is not configured yet.",
-    refreshSnapshotFailed: "Live data refreshed, but the persistent JSON update could not be started.",
+    refreshSnapshotNotConfigured: "Persistent JSON update is not configured yet.",
+    refreshSnapshotFailed: "The persistent JSON update could not be started.",
     exportCsv: "Export CSV",
     exportXlsx: "Export Excel",
     statusLoading: "Loading data...",
@@ -98,12 +98,12 @@ const I18N = {
     period: "Perioada de finantare 2021-2027",
     language: "Limba",
     searchPlaceholder: "Cauta dupa titlu, cod, program...",
-    refresh: "Actualizeaza date live",
-    refreshSnapshotStarted: "Actualizarea snapshot-ului a fost pornita. Daca JSON-ul se schimba, GitHub il va comite si Vercel va redeploya automat.",
+    refresh: "Actualizeaza snapshot JSON",
+    refreshSnapshotStarted: "Actualizarea snapshot-ului a fost pornita. GitHub va reconstrui JSON-ul si Vercel va redeploya automat daca exista schimbari.",
     refreshSnapshotSkipped: "Actualizarea snapshot-ului a fost ceruta recent, asa ca nu a fost pornita din nou.",
     refreshCooldown: "Actualizare disponibila in {seconds}s",
-    refreshSnapshotNotConfigured: "Datele live au fost actualizate. Actualizarea persistenta a JSON-ului nu este configurata inca.",
-    refreshSnapshotFailed: "Datele live au fost actualizate, dar actualizarea persistenta a JSON-ului nu a putut porni.",
+    refreshSnapshotNotConfigured: "Actualizarea persistenta a JSON-ului nu este configurata inca.",
+    refreshSnapshotFailed: "Actualizarea persistenta a JSON-ului nu a putut porni.",
     exportCsv: "Export CSV",
     exportXlsx: "Export Excel",
     statusLoading: "Se incarca datele...",
@@ -503,52 +503,19 @@ function shouldSkipLiveReconcile(codes) {
   return false;
 }
 
-function mergeVerifiedRows(liveRows) {
-  if (!Array.isArray(liveRows) || liveRows.length === 0) return false;
-
-  const liveByCode = new Map();
-  for (const row of liveRows) {
-    const normalized = normalizeClientRow(row);
-    const code = getTopicCode(normalized).toLowerCase();
-    if (code) liveByCode.set(code, normalized);
-  }
-
-  if (liveByCode.size === 0) return false;
-
-  let changed = false;
-  state.allRows = state.allRows.map((row) => {
-    const replacement = liveByCode.get(getTopicCode(row).toLowerCase());
-    if (!replacement) return row;
-    changed = true;
-    return replacement;
-  });
-  state.rows = state.allRows;
-
-  for (const [key, selectedRow] of state.selectedRows.entries()) {
-    const replacement = liveByCode.get(getTopicCode(selectedRow).toLowerCase());
-    if (replacement) state.selectedRows.set(key, replacement);
-  }
-
-  return changed;
+function mergeVerifiedRows() {
+  // Disabled: the browser must never mutate/delete the dataset based on live checks.
+  // The persistent JSON snapshot is regenerated only by GitHub Actions.
+  return false;
 }
 
-function removeMissingRows(missingCodes) {
-  if (!Array.isArray(missingCodes) || missingCodes.length === 0) return false;
 
-  const missing = new Set(missingCodes.map((code) => String(code || "").trim().toLowerCase()).filter(Boolean));
-  if (missing.size === 0) return false;
-
-  const before = state.allRows.length;
-  state.allRows = state.allRows.filter((row) => !missing.has(getTopicCode(row).toLowerCase()));
-  state.rows = state.allRows;
-  for (const [key, row] of state.selectedRows.entries()) {
-    if (missing.has(getTopicCode(row).toLowerCase())) {
-      state.selectedRows.delete(key);
-      state.selectedIds.delete(key);
-    }
-  }
-  return state.allRows.length !== before;
+function removeMissingRows() {
+  // Disabled: navigating pages or partial live responses must never remove rows visually.
+  // Stale rows disappear only after the snapshot JSON is regenerated and redeployed.
+  return false;
 }
+
 
 function markReconciledSource(source) {
   const text = String(source || "").toLowerCase();
@@ -556,41 +523,11 @@ function markReconciledSource(source) {
 }
 
 async function reconcileCurrentPageWithLive(options = {}) {
-  if (state.liveReconcileInFlight) return;
-  if (markReconciledSource(state.lastPayloadSource) && !options.force) return;
-
-  const pageRows = getCurrentVisiblePageRows();
-  const codes = Array.from(new Set(pageRows.map(getTopicCode).filter(Boolean))).slice(0, LIVE_RECONCILE_MAX_CODES);
-  if (shouldSkipLiveReconcile(codes) && !options.force) return;
-
-  state.liveReconcileInFlight = true;
-  try {
-    const params = new URLSearchParams({
-      verify: "1",
-      codes: codes.join(","),
-    });
-    const res = await fetchWithTimeout(`/api/calls?${params.toString()}`, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    if (!res.ok) return;
-    const payload = await readJsonIfPossible(res, false);
-    if (!payload) return;
-
-    const merged = mergeVerifiedRows(payload.rows);
-    const removed = removeMissingRows(payload.missingCodes);
-    if (merged || removed) {
-      state.filterMetadata = Object.create(null);
-      state.totalRows = state.allRows.length;
-      saveLocalCache();
-      renderFiltersPanel();
-      renderRows();
-    }
-  } catch {
-    // Keep the local/snapshot data if live verification is temporarily unavailable.
-  } finally {
-    state.liveReconcileInFlight = false;
-  }
+  // Disabled intentionally: verifying/removing items while the user navigates pages
+  // can make the global count shrink page by page when the live API returns partial
+  // or inconsistent verification responses. The persistent snapshot is updated by
+  // GitHub Actions instead, so navigation must be read-only and stable.
+  return;
 }
 
 function updateMetaText() {
@@ -1786,8 +1723,13 @@ async function handleRefreshClick() {
   updateRefreshButtonCooldownState();
 
   try {
-    await loadSnapshot(true, state.page);
-    triggerPersistentSnapshotRefresh().catch(() => {});
+    // Request a persistent JSON rebuild through GitHub Actions.
+    // Do not reconcile or delete browser rows from live API responses.
+    await triggerPersistentSnapshotRefresh();
+
+    // Re-read the deployed JSON snapshot with no-store. If Vercel has not
+    // redeployed yet, the current dataset remains stable.
+    await loadSnapshot(true, state.page, { preservePosition: true });
   } finally {
     updateRefreshButtonCooldownState();
   }
@@ -1802,36 +1744,21 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
     let payload = null;
     let responseSource = "";
 
-    if (forceRefresh) {
-      const liveData = await fetchAllApiRows(true).catch(() => null);
-      if (liveData && Array.isArray(liveData.items) && liveData.items.length) {
-        payload = liveData;
-        responseSource = "/api/calls";
-      }
+    const snapshotData = await fetchSnapshotPayload(forceRefresh);
+    if (snapshotData) {
+      payload = snapshotData.payload;
+      responseSource = snapshotData.responseSource;
     }
 
-    if (!payload) {
-      const snapshotData = await fetchSnapshotPayload(forceRefresh);
-      if (snapshotData) {
-        payload = snapshotData.payload;
-        responseSource = snapshotData.responseSource;
-      }
-    }
-
-    if (!payload) {
-      const liveData = await fetchAllApiRows(forceRefresh).catch(() => null);
-      if (liveData && Array.isArray(liveData.items) && liveData.items.length) {
-        payload = liveData;
-        responseSource = "/api/calls";
-      }
-    }
+    // Deliberately do not rebuild the dataset from the browser/API here.
+    // The browser only reads the deployed JSON snapshot; GitHub Actions is the
+    // only process allowed to regenerate that JSON. This keeps pagination stable.
 
     if (!payload) {
       throw new Error("No valid data source available");
     }
 
     applyPayload(payload, responseSource, targetPage);
-    reconcileCurrentPageWithLive({ force: forceRefresh }).catch(() => {});
   } catch (error) {
     const cachedPayload = loadLocalCache();
     if (cachedPayload && Array.isArray(cachedPayload.items) && cachedPayload.items.length) {
@@ -2040,7 +1967,6 @@ function goToLocalPage(nextPage) {
 
   state.page = safePage;
   renderRows();
-  reconcileCurrentPageWithLive().catch(() => {});
 }
 
 refs.prevPageBtn.addEventListener("click", () => {
