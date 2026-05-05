@@ -16,10 +16,12 @@ const COLUMN_ORDER = [
   "Subdomains",
   "CAll link",
 ];
+const TOPIC_TITLE_COLUMN = "Topic title";
 const DESCRIPTION_COLUMN = "Topic description";
 const FULL_DESCRIPTION_FIELD = "Topic description full";
 const BUDGET_COLUMN = "Budget (EUR) - Year : 2026";
 const STATUS_COLUMN = "Status";
+const TITLE_PREVIEW_LENGTH = 95;
 const DESCRIPTION_PREVIEW_LENGTH = 220;
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
 const LIVE_DATA_ENDPOINT = "/api/calls";
@@ -62,7 +64,7 @@ const I18N = {
     exportCsv: "Export CSV",
     exportXlsx: "Export Excel",
     statusLoading: "Loading data...",
-    statusLoaded: "Showing {count} available calls (Open + Forthcoming).",
+    statusLoaded: "Showing {count} EU-reported Open/Forthcoming calls.",
     statusEmpty: "No calls available for the current filters.",
     statusError: "Could not load data.",
     updatedAt: "Last update: {date}",
@@ -118,7 +120,7 @@ const I18N = {
     exportCsv: "Export CSV",
     exportXlsx: "Export Excel",
     statusLoading: "Se incarca datele...",
-    statusLoaded: "Se afiseaza {count} apeluri disponibile (Open + Forthcoming).",
+    statusLoaded: "Se afiseaza {count} apeluri raportate de UE ca Open/Forthcoming.",
     statusEmpty: "Nu exista apeluri pentru filtrele curente.",
     statusError: "Datele nu au putut fi incarcate.",
     updatedAt: "Ultima actualizare: {date}",
@@ -243,7 +245,7 @@ function normalizeFilterValue(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming"];
+const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming", "closed"];
 const MULTISELECT_COLUMNS = new Set([STATUS_COLUMN, "Stages", "Programme", "Programme code", "Type of Action", "Domains", "Subdomains"]);
 
 function canonicalizeSelectValue(value) {
@@ -327,7 +329,7 @@ function createDefaultFilterState(column) {
       return { kind: "select", values: getDefaultSelectValues(column), includeNA: false };
     case "Topic code":
       return { kind: "text", value: "" };
-    case "Topic title":
+    case TOPIC_TITLE_COLUMN:
     case DESCRIPTION_COLUMN:
       return { kind: "text", value: "" };
     case "Opening date":
@@ -383,10 +385,15 @@ function normalizeCallLink(topicCode, candidateUrl) {
 }
 
 function buildRowKey(row) {
+  const rowId = sanitize(row._rowId);
+  if (rowId !== "N/A") return rowId;
+
+  const sourceReference = sanitize(row._sourceReference);
   const code = sanitize(row["Topic code"]);
   const link = sanitize(row["CAll link"]);
   const deadline = sanitize(row["Deadline"]);
-  return `${code}::${link}::${deadline}`;
+  const title = sanitize(row[TOPIC_TITLE_COLUMN]);
+  return `${sourceReference}::${code}::${link}::${deadline}::${title}`;
 }
 
 function normalizeClientRow(row) {
@@ -705,9 +712,20 @@ function getDescriptionPreview(row) {
   return `${full.slice(0, DESCRIPTION_PREVIEW_LENGTH - 3).trimEnd()}...`;
 }
 
+function getTitlePreview(row) {
+  const full = sanitize(row[TOPIC_TITLE_COLUMN]);
+  if (full === "N/A" || full.length <= TITLE_PREVIEW_LENGTH) return full;
+  return `${full.slice(0, TITLE_PREVIEW_LENGTH - 3).trimEnd()}...`;
+}
+
 function hasExpandedDescription(row) {
   const full = getFullDescription(row);
   return full !== "N/A" && full.length > DESCRIPTION_PREVIEW_LENGTH;
+}
+
+function hasExpandedTitle(row) {
+  const full = sanitize(row[TOPIC_TITLE_COLUMN]);
+  return full !== "N/A" && full.length > TITLE_PREVIEW_LENGTH;
 }
 
 function isForthcomingRow(row) {
@@ -792,6 +810,27 @@ function createDescriptionCell(row) {
   wrapper.appendChild(preview);
 
   if (hasExpandedDescription(row)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "desc-more-btn";
+    button.textContent = t("readMore");
+    button.addEventListener("click", () => openDescriptionModal(row));
+    wrapper.appendChild(button);
+  }
+
+  return wrapper;
+}
+
+function createTopicTitleCell(row) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "title-cell";
+
+  const preview = document.createElement("p");
+  preview.className = "title-preview";
+  preview.textContent = getTitlePreview(row);
+  wrapper.appendChild(preview);
+
+  if (hasExpandedTitle(row)) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "desc-more-btn";
@@ -1166,6 +1205,8 @@ function renderRows() {
         a.className = "call-link";
         a.textContent = t("openLink");
         td.appendChild(a);
+      } else if (col === TOPIC_TITLE_COLUMN) {
+        td.appendChild(createTopicTitleCell(row));
       } else if (col === DESCRIPTION_COLUMN) {
         td.appendChild(createDescriptionCell(row));
       } else if (col === BUDGET_COLUMN) {
@@ -1856,6 +1897,7 @@ async function fetchAllApiRows(forceRefresh = false) {
       pageSize: String(EXPORT_FETCH_PAGE_SIZE),
     });
     if (forceRefresh) params.set("refresh", "1");
+    params.set("includeClosed", "1");
     return "/api/calls?" + params.toString();
   };
 
@@ -2027,7 +2069,7 @@ function getExportValue(row, col) {
 }
 
 async function fetchExportPage(page) {
-  const url = `/api/calls?page=${page}&pageSize=${EXPORT_FETCH_PAGE_SIZE}`;
+  const url = `/api/calls?page=${page}&pageSize=${EXPORT_FETCH_PAGE_SIZE}&includeClosed=1`;
   const res = await fetchWithTimeout(url, {
     headers: {
       Accept: "application/json",

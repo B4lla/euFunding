@@ -36,23 +36,36 @@ const SEARCH_COLUMNS = [
 ];
 
 const PROGRAMME_CODE_MAP = {
+  "111111": "EuropeAid",
   "43108390": "Horizon Europe",
-  "43298916": "Euratom Research and Training Programme",
   "43152860": "Digital Europe",
-  "43251589": "Citizens, Equality, Rights and Values",
-  "43252413": "LIFE",
   "43251567": "Connecting Europe Facility",
-  "43252444": "Single Market Programme",
-  "43251814": "Creative Europe",
+  "43251589": "Citizens, Equality, Rights and Values",
   "43251801": "Erasmus+",
-  "43251792": "European Solidarity Corps",
-  "43252405": "EU4Health",
-  "43251582": "Justice Programme",
-  "43251842": "Asylum, Migration and Integration Fund",
-  "43251849": "Internal Security Fund",
+  "43251814": "Creative Europe",
   "43251833": "European Defence Fund",
-  "43251821": "Space Programme",
-  "43332642": "Innovation Fund",
+  "43251842": "Union Anti-fraud Programme",
+  "43251849": "Internal Security Fund",
+  "43252368": "Internal Security Fund",
+  "43252413": "LIFE",
+  "43252405": "LIFE",
+  "43252433": "PERICLES IV",
+  "43252449": "Research Fund for Coal and Steel",
+  "43252444": "Single Market Programme",
+  "43252476": "Single Market Programme",
+  "43252517": "Social Prerogative and Specific Competencies Lines",
+  "43254019": "European Social Fund",
+  "43254037": "European Solidarity Corps",
+  "43251792": "European Solidarity Corps",
+  "43298203": "Union Civil Protection Mechanism",
+  "43298916": "EURATOM",
+  "43353764": "Erasmus+",
+  "43637601": "Pilot Projects and Preparatory Actions",
+  "43697167": "European Parliament",
+  "44181033": "European Defence Fund",
+  "44416173": "I3",
+  "44773066": "Just Transition Mechanism",
+  "45532249": "EU Bodies and Agencies",
 };
 
 const ACTION_TYPE_CODE_MAP = {
@@ -64,83 +77,211 @@ const ACTION_TYPE_CODE_MAP = {
 
 const DOMAIN_RULES = [
   {
-    domain: "Digital",
+    domain: "Health",
     subdomains: [
-      ["Artificial intelligence", /\b(ai|artificial intelligence|machine learning|algorithm|robotics)\b/i],
-      ["Cybersecurity", /\b(cyber|security operation centre|soc|encryption|incident response)\b/i],
-      ["Data and cloud", /\b(data space|dataspace|cloud|edge|interoperab|data sharing|big data)\b/i],
-      ["Semiconductors", /\b(chip|semiconductor|microelectronic|processor|quantum chip)\b/i],
-      ["Connectivity", /\b(5g|6g|broadband|connectivity|telecom|network)\b/i],
+      ["Public Health", /\b(public health|healthcare|patient|hospital|health system|health systems)\b/i],
+      ["Personalised Medicine", /\b(personali[sz]ed medicine|precision medicine|tailored treatment)\b/i],
+      ["Cancer", /\b(cancer|oncology|tumou?r)\b/i],
+      ["Mental Health", /\b(mental health|wellbeing|psychological|psychiatric)\b/i],
+      ["Infectious Diseases", /\b(infectious disease|infection|pandemic|epidemic|vaccine|antimicrobial)\b/i],
+      ["Medical Devices", /\b(medical device|diagnostic device|in vitro diagnostic|wearable health)\b/i],
+      ["Digital Health", /\b(digital health|ehealth|e-health|telemedicine|remote care|digital therapeutics)\b/i],
+      ["Health Data", /\b(health data|patient data|electronic health record|ehr|health record)\b/i],
+      ["Prevention & Screening", /\b(prevention|screening|early detection|risk assessment)\b/i],
+      ["Care Pathways", /\b(care pathway|clinical pathway|integrated care|continuity of care)\b/i],
+      ["Genomics", /\b(genomic|genomics|genome|sequencing)\b/i],
+      ["Biomarkers", /\b(biomarker|bio-marker)\b/i],
     ],
   },
   {
-    domain: "Health",
+    domain: "Digital",
     subdomains: [
-      ["Public health", /\b(health|healthcare|patient|hospital|disease|pandemic|vaccine|medical)\b/i],
-      ["Cancer", /\b(cancer|oncology|tumou?r)\b/i],
-      ["Biotechnology", /\b(biotech|biotechnology|genomic|biomarker|clinical trial)\b/i],
-      ["Mental health", /\b(mental health|wellbeing|psychological)\b/i],
+      ["Artificial Intelligence", /\b(ai|artificial intelligence|machine learning|deep learning|algorithm)\b/i],
+      ["Cybersecurity", /\b(cybersecurity|cyber security|cyber|encryption|security operation centre|soc)\b/i],
+      ["Data Spaces", /\b(data space|data spaces|dataspace|common european data)\b/i],
+      ["Cloud & Edge", /\b(cloud|edge computing|edge infrastructure)\b/i],
+      ["High Performance Computing", /\b(high performance computing|hpc|supercomput)\b/i],
+      ["Semiconductors", /\b(semiconductor|chip|microelectronic|processor|integrated circuit)\b/i],
+      ["Robotics", /\b(robot|robotics|autonomous system)\b/i],
+      ["XR & Virtual Worlds", /\b(xr|extended reality|virtual world|virtual worlds|augmented reality|mixed reality|metaverse)\b/i],
+      ["Blockchain", /\b(blockchain|distributed ledger|dlt|web3)\b/i],
+      ["Interoperability", /\b(interoperab|standardi[sz]ation|data exchange|cross-border digital)\b/i],
+      ["Digital Platforms", /\b(digital platform|platform economy|online platform)\b/i],
+      ["Connectivity", /\b(5g|6g|broadband|connectivity|telecom|network infrastructure)\b/i],
+    ],
+  },
+  {
+    domain: "Climate & Environment",
+    subdomains: [
+      ["Biodiversity", /\b(biodiversity|ecosystem|nature|species|habitat)\b/i],
+      ["Circular Economy", /\b(circular economy|circular|recycling|reuse|secondary raw material)\b/i],
+      ["Pollution Reduction", /\b(pollution|pollutant|contamination|zero pollution)\b/i],
+      ["Climate Adaptation", /\b(climate adaptation|adaptation|climate resilience|resilience to climate)\b/i],
+      ["Climate Mitigation", /\b(climate mitigation|decarboni[sz]ation|carbon reduction|greenhouse gas|emission reduction)\b/i],
+      ["Air Quality", /\b(air quality|air pollution|particulate matter|pm2\.5|pm10)\b/i],
+      ["Waste Management", /\b(waste management|waste|landfill|municipal waste)\b/i],
+      ["Nature-Based Solutions", /\b(nature-based solution|nature based solution|nbs)\b/i],
+      ["Environmental Monitoring", /\b(environmental monitoring|monitoring environment|earth monitoring)\b/i],
+      ["Resource Efficiency", /\b(resource efficiency|resource efficient|material efficiency)\b/i],
     ],
   },
   {
     domain: "Energy",
     subdomains: [
-      ["Renewables", /\b(renewable|solar|wind|photovoltaic|geothermal|hydropower)\b/i],
+      ["Renewable Energy", /\b(renewable energy|renewable|solar|wind|photovoltaic|geothermal|hydropower)\b/i],
+      ["Energy Storage", /\b(energy storage|storage system|thermal storage|electricity storage)\b/i],
+      ["Batteries", /\b(battery|batteries|battery storage)\b/i],
       ["Hydrogen", /\b(hydrogen|electrolyser|fuel cell)\b/i],
-      ["Nuclear", /\b(nuclear|euratom|radiation|radioactive|fission|fusion)\b/i],
-      ["Energy systems", /\b(energy|electricity|grid|storage|battery|heating|cooling)\b/i],
+      ["Smart Grids", /\b(smart grid|electricity grid|grid management|grid infrastructure)\b/i],
+      ["Energy Efficiency", /\b(energy efficiency|efficient energy|energy saving|building efficiency)\b/i],
+      ["Heating & Cooling", /\b(heating|cooling|district heating|heat pump)\b/i],
+      ["Energy Systems Integration", /\b(energy system|systems integration|integrated energy|sector coupling|nuclear|euratom|fusion|fission)\b/i],
+      ["Flexibility", /\b(flexibility|demand response|load balancing)\b/i],
+      ["Energy Communities", /\b(energy communit|citizen energy|renewable communit)\b/i],
     ],
   },
   {
-    domain: "Climate and environment",
+    domain: "Mobility & Transport",
     subdomains: [
-      ["Climate", /\b(climate|decarboni|carbon|emission|greenhouse)\b/i],
-      ["Biodiversity", /\b(biodiversity|ecosystem|nature|species|habitat)\b/i],
-      ["Circular economy", /\b(circular|recycling|waste|reuse|resource efficiency)\b/i],
-      ["Water and oceans", /\b(water|marine|ocean|sea|coastal|river)\b/i],
-    ],
-  },
-  {
-    domain: "Transport and mobility",
-    subdomains: [
-      ["Urban mobility", /\b(mobility|urban transport|eit urban)\b/i],
+      ["Urban Mobility", /\b(urban mobility|mobility|public transport|eit urban)\b/i],
       ["Rail", /\b(rail|railway|train)\b/i],
       ["Aviation", /\b(aviation|aircraft|aerospace|airport)\b/i],
-      ["Maritime", /\b(maritime|shipping|vessel|port)\b/i],
-      ["Road transport", /\b(road|vehicle|automotive|charging infrastructure)\b/i],
+      ["Maritime Transport", /\b(maritime|shipping|vessel|ship|port)\b/i],
+      ["Road Transport", /\b(road transport|road|vehicle|automotive|charging infrastructure)\b/i],
+      ["Logistics", /\b(logistics|supply chain|transport logistics)\b/i],
+      ["CCAM", /\b(ccam|connected cooperative automated mobility|automated mobility|autonomous mobility)\b/i],
+      ["Transport Infrastructure", /\b(transport infrastructure|ten-t|infrastructure)\b/i],
+      ["Port Systems", /\b(port system|ports|harbour|terminal)\b/i],
+      ["Freight Decarbonisation", /\b(freight decarboni[sz]ation|freight emission|zero-emission freight)\b/i],
     ],
   },
   {
-    domain: "Industry and space",
+    domain: "Agriculture & Food",
     subdomains: [
-      ["Manufacturing", /\b(manufactur|factory|industrial|production line)\b/i],
-      ["Materials", /\b(material|raw material|steel|polymer|composite)\b/i],
-      ["Space", /\b(space|satellite|copernicus|galileo|earth observation)\b/i],
-      ["Construction", /\b(construction|built environment|building|renovation)\b/i],
+      ["Precision Agriculture", /\b(precision agriculture|smart farming|precision farming)\b/i],
+      ["Soil Health", /\b(soil health|soil|soil quality)\b/i],
+      ["Sustainable Farming", /\b(sustainable farming|sustainable agriculture|agroecology|farming)\b/i],
+      ["Food Systems", /\b(food system|food systems|food supply|nutrition)\b/i],
+      ["Food Waste", /\b(food waste|food loss)\b/i],
+      ["Alternative Proteins", /\b(alternative protein|plant-based protein|cultured meat|novel protein)\b/i],
+      ["Agri-Digitalisation", /\b(agri-digitali[sz]ation|digital agriculture|farm data|agritech)\b/i],
+      ["Animal Health", /\b(animal health|livestock health|veterinary)\b/i],
+      ["Rural Innovation", /\b(rural innovation|rural area|rural development)\b/i],
+      ["Water for Agriculture", /\b(irrigation|water for agriculture|agricultural water)\b/i],
     ],
   },
   {
-    domain: "Security and defence",
+    domain: "Education & Skills",
     subdomains: [
-      ["Defence", /\b(defence|defense|military|dual use|edf)\b/i],
-      ["Civil security", /\b(civil security|border|crisis|disaster|resilience|law enforcement)\b/i],
+      ["Vocational Education", /\b(vocational education|vet|vocational training)\b/i],
+      ["Higher Education Cooperation", /\b(higher education|university cooperation|european universities)\b/i],
+      ["Lifelong Learning", /\b(lifelong learning|adult learning|continuous learning)\b/i],
+      ["Digital Skills", /\b(digital skills|ict skills|digital competence)\b/i],
+      ["Deep Tech Skills", /\b(deep tech skills|deep-tech skills|advanced digital skills)\b/i],
+      ["Teacher Training", /\b(teacher training|teacher education|educator training)\b/i],
+      ["Reskilling", /\b(reskilling|re-skilling)\b/i],
+      ["Upskilling", /\b(upskilling|up-skilling)\b/i],
+      ["Curriculum Innovation", /\b(curriculum innovation|curricula|curriculum)\b/i],
+      ["Talent Development", /\b(talent development|talent pipeline|skills talent)\b/i],
     ],
   },
   {
-    domain: "Food and bioeconomy",
+    domain: "Culture & Media",
     subdomains: [
-      ["Agriculture", /\b(agri|agriculture|farm|soil|crop|livestock)\b/i],
-      ["Food systems", /\b(food|nutrition|aquaculture|fisheries)\b/i],
-      ["Bioeconomy", /\b(bioeconomy|biobased|bio-based|forestry)\b/i],
+      ["Cultural Heritage", /\b(cultural heritage|heritage|museum|monument)\b/i],
+      ["Audiovisual Production", /\b(audiovisual|audio-visual|film production|tv production)\b/i],
+      ["Media Innovation", /\b(media innovation|news media|digital media)\b/i],
+      ["Creative Industries", /\b(creative industr|creative sector|cultural and creative)\b/i],
+      ["Audience Development", /\b(audience development|audience engagement)\b/i],
+      ["Heritage Digitisation", /\b(heritage digiti[sz]ation|digital heritage)\b/i],
+      ["Cultural Participation", /\b(cultural participation|access to culture)\b/i],
+      ["Journalism", /\b(journalism|journalist|newsroom|press freedom)\b/i],
     ],
   },
   {
-    domain: "Society and governance",
+    domain: "Security & Resilience",
     subdomains: [
-      ["Democracy and rights", /\b(democracy|rights|citizen|equality|inclusion|migration)\b/i],
-      ["Culture and creativity", /\b(culture|creative|media|heritage|arts)\b/i],
-      ["Education and skills", /\b(education|training|skills|learning|erasmus)\b/i],
-      ["Research ecosystem", /\b(research infrastructure|widening|era|researcher|innovation ecosystem)\b/i],
+      ["Disaster Resilience", /\b(disaster resilience|natural disaster|disaster risk)\b/i],
+      ["Crisis Management", /\b(crisis management|crisis response|crisis preparedness)\b/i],
+      ["Border Security", /\b(border security|border management|external border)\b/i],
+      ["Civil Security", /\b(civil security|law enforcement|public security)\b/i],
+      ["Critical Infrastructure Protection", /\b(critical infrastructure|infrastructure protection)\b/i],
+      ["Cyber Resilience", /\b(cyber resilience|resilient cyber|cyber threat)\b/i],
+      ["Emergency Preparedness", /\b(emergency preparedness|preparedness|emergency response)\b/i],
+    ],
+  },
+  {
+    domain: "Industry & Manufacturing",
+    subdomains: [
+      ["Advanced Manufacturing", /\b(advanced manufacturing|manufactur|factory|production line)\b/i],
+      ["Advanced Materials", /\b(advanced material|materials|raw material|composite|polymer|steel)\b/i],
+      ["Industrial Robotics", /\b(industrial robotics|robotic manufacturing|factory robot)\b/i],
+      ["Process Innovation", /\b(process innovation|industrial process|process optimisation)\b/i],
+      ["Industrial Decarbonisation", /\b(industrial decarboni[sz]ation|industry emission|low-carbon industry)\b/i],
+      ["Additive Manufacturing", /\b(additive manufacturing|3d printing)\b/i],
+      ["Industrial Data", /\b(industrial data|manufacturing data|data-driven industry)\b/i],
+      ["Circular Manufacturing", /\b(circular manufacturing|remanufacturing|industrial recycling)\b/i],
+    ],
+  },
+  {
+    domain: "Public Sector & Governance",
+    subdomains: [
+      ["eGovernment", /\b(egovernment|e-government|digital government)\b/i],
+      ["GovTech", /\b(govtech|government technology)\b/i],
+      ["Public Sector Interoperability", /\b(public sector interoperab|interoperable public service)\b/i],
+      ["Administrative Capacity", /\b(administrative capacity|public administration capacity)\b/i],
+      ["Public Procurement Innovation", /\b(public procurement innovation|innovation procurement|pre-commercial procurement|pcp)\b/i],
+      ["Data Governance", /\b(data governance|data sharing governance)\b/i],
+      ["Regulatory Technology", /\b(regulatory technology|regtech|regulatory sandbox)\b/i],
+      ["Public Service Design", /\b(public service design|service design)\b/i],
+    ],
+  },
+  {
+    domain: "Social Inclusion & Democracy",
+    subdomains: [
+      ["Social Innovation", /\b(social innovation|social economy)\b/i],
+      ["Equality", /\b(equality|gender equality|non-discrimination)\b/i],
+      ["Citizen Participation", /\b(citizen participation|citizen engagement|participatory)\b/i],
+      ["Democratic Engagement", /\b(democratic engagement|democracy|democratic participation)\b/i],
+      ["Inclusion of Vulnerable Groups", /\b(vulnerable group|social inclusion|marginali[sz]ed|inclusion)\b/i],
+      ["Rights Awareness", /\b(rights awareness|fundamental rights|human rights)\b/i],
+      ["Community Development", /\b(community development|local community|community-led)\b/i],
+    ],
+  },
+  {
+    domain: "Built Environment & Cities",
+    subdomains: [
+      ["Sustainable Buildings", /\b(sustainable building|building sustainability|green building)\b/i],
+      ["Urban Regeneration", /\b(urban regeneration|urban renewal)\b/i],
+      ["Smart Cities", /\b(smart city|smart cities)\b/i],
+      ["Affordable Housing", /\b(affordable housing|social housing)\b/i],
+      ["Construction Innovation", /\b(construction innovation|construction sector|building sector)\b/i],
+      ["Net-Zero Buildings", /\b(net-zero building|zero-emission building|zero energy building)\b/i],
+      ["Local Climate Planning", /\b(local climate planning|climate plan|city climate)\b/i],
+    ],
+  },
+  {
+    domain: "Blue Economy & Water",
+    subdomains: [
+      ["Water Management", /\b(water management|water resource|river basin)\b/i],
+      ["Water Reuse", /\b(water reuse|reclaimed water|wastewater reuse)\b/i],
+      ["Marine Biodiversity", /\b(marine biodiversity|marine ecosystem|ocean biodiversity)\b/i],
+      ["Coastal Resilience", /\b(coastal resilience|coastal protection|coastal adaptation)\b/i],
+      ["Fisheries Innovation", /\b(fisheries innovation|fisheries|aquaculture)\b/i],
+      ["Ocean Observation", /\b(ocean observation|ocean monitoring|marine observation)\b/i],
+      ["Blue Bioeconomy", /\b(blue bioeconomy|marine bioeconomy|blue growth)\b/i],
+    ],
+  },
+  {
+    domain: "Space & Aerospace",
+    subdomains: [
+      ["Earth Observation", /\b(earth observation|copernicus|remote sensing)\b/i],
+      ["Satellite Applications", /\b(satellite application|satellite service|satellite data)\b/i],
+      ["Space Data", /\b(space data|space-based data)\b/i],
+      ["Launch Systems", /\b(launch system|launcher|space launch)\b/i],
+      ["Space Communications", /\b(space communication|satellite communication|satcom)\b/i],
+      ["Aerospace Materials", /\b(aerospace material|aircraft material)\b/i],
+      ["Space Situational Awareness", /\b(space situational awareness|space surveillance|space debris|ssa)\b/i],
     ],
   },
 ];
@@ -156,7 +297,7 @@ module.exports = async function handler(req, res) {
   const pagination = parsePagination(query);
   const searchText = parseSearchText(query);
   const forceRefresh = isTruthyFlag(query.refresh);
-  const includeClosed = isTruthyFlag(query.includeClosed);
+  const includeClosed = !isTruthyFlag(query.excludeClosed);
 
   try {
     const payload = await getLivePage({
@@ -249,7 +390,7 @@ async function getLivePage(options) {
 
   const page = await fetchPage(options.page, options.pageSize, CONFIG.REQUEST_TIMEOUT_MS, options.searchText);
   const items = [];
-  appendNormalizedItems(items, page.items, options.includeClosed);
+  appendNormalizedItems(items, page.items, options.includeClosed, options.page);
 
   const reportedTotal = Number(page.totalResults || page.items.length || 0);
   const reportedPages = Math.max(1, Math.ceil(Math.max(reportedTotal, page.items.length, 1) / options.pageSize));
@@ -290,13 +431,17 @@ function buildSearchQuery() {
   };
 }
 
-function appendNormalizedItems(out, rawItems, includeClosed) {
+function appendNormalizedItems(out, rawItems, includeClosed, pageNumber) {
   if (!Array.isArray(rawItems)) return;
-  for (const item of rawItems) {
+  for (let index = 0; index < rawItems.length; index += 1) {
+    const item = rawItems[index];
     const row = normalizeItem(item);
     if (!row) continue;
     if (!includeClosed && row._statusLabel === "closed") continue;
+    row._apiPage = pageNumber;
+    row._apiPageOrdinal = index + 1;
     row._apiOrdinal = out.length + 1;
+    row._rowId = `${pageNumber}:${index + 1}`;
     out.push(row);
   }
 }
@@ -399,6 +544,7 @@ function normalizeItem(item) {
     _statusLabel: statusLabel,
     _statusCode: statusInfo.code || "",
     _statusReason: statusInfo.reason || "",
+    _sourceReference: item.reference || "",
     _programmeCode: programmeCode,
     _budgetEstimated: Boolean(budget.isEstimated),
     _budgetSourceYear: budget.sourceYear || "",
@@ -490,7 +636,7 @@ function mapProgramme(raw, topicCode) {
   if (value && !/^\d+$/.test(value)) return value;
 
   const upper = String(topicCode || "").toUpperCase();
-  if (upper.startsWith("HORIZON-EURATOM-")) return "Euratom Research and Training Programme";
+  if (upper.startsWith("HORIZON-EURATOM-")) return "EURATOM";
   if (upper.startsWith("HORIZON-")) return "Horizon Europe";
   if (upper.startsWith("LIFE-")) return "LIFE";
   if (upper.startsWith("DIGITAL-")) return "Digital Europe";
@@ -859,12 +1005,14 @@ function tagCall({ topicCode, title, fullDescription, programme }) {
 
   if (/^DIGITAL-/i.test(topicCode)) scored.push({ domain: "Digital", score: 2 });
   if (/^EU4H-/i.test(topicCode)) scored.push({ domain: "Health", score: 2 });
-  if (/^LIFE-/i.test(topicCode)) scored.push({ domain: "Climate and environment", score: 2 });
-  if (/^CEF-/i.test(topicCode)) scored.push({ domain: "Transport and mobility", score: 1 });
-  if (/^HORIZON-EURATOM-/i.test(topicCode)) {
-    scored.push({ domain: "Energy", score: 2 });
-    subdomains.push("Nuclear");
-  }
+  if (/^LIFE-/i.test(topicCode)) scored.push({ domain: "Climate & Environment", score: 2 });
+  if (/^CEF-/i.test(topicCode)) scored.push({ domain: "Mobility & Transport", score: 1 });
+  if (/^HORIZON-EURATOM-/i.test(topicCode)) scored.push({ domain: "Energy", score: 2 });
+  if (/\b(erasmus|education|skills|training|learning)\b/i.test(text)) scored.push({ domain: "Education & Skills", score: 1 });
+  if (/\b(culture|creative|media|heritage|journalism)\b/i.test(text)) scored.push({ domain: "Culture & Media", score: 1 });
+  if (/\b(space|satellite|copernicus|galileo|aerospace)\b/i.test(text)) scored.push({ domain: "Space & Aerospace", score: 1 });
+  if (/\b(city|cities|building|construction|housing|urban regeneration)\b/i.test(text)) scored.push({ domain: "Built Environment & Cities", score: 1 });
+  if (/\b(water|marine|ocean|coastal|fisheries|aquaculture)\b/i.test(text)) scored.push({ domain: "Blue Economy & Water", score: 1 });
 
   const domainTotals = new Map();
   for (const entry of scored) {

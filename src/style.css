@@ -949,17 +949,26 @@ select:focus,
   height: 0.95rem;
   accent-color: var(--brand);
 }
-thead th:nth-child(2) { min-width: 8rem; }    
-thead th:nth-child(3) { min-width: 8rem; }    
-thead th:nth-child(4) { min-width: 9rem; }    
-thead th:nth-child(5) { min-width: 13rem; }   
-thead th:nth-child(6) { min-width: 18rem; }   
-thead th:nth-child(7) { min-width: 10rem; }   
-thead th:nth-child(8) { min-width: 5rem; }    
-thead th:nth-child(9) { min-width: 5rem; }    
-thead th:nth-child(10) { min-width: 6rem; }   
-thead th:nth-child(11) { min-width: 6rem; }   
-thead th:nth-child(12) { min-width: 4rem; }   
+table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+}
+
+thead th:nth-child(2) { width: 9rem; max-width: 9rem; }
+thead th:nth-child(3) { width: 7rem; max-width: 7rem; }
+thead th:nth-child(4) { width: 7rem; max-width: 7rem; }
+thead th:nth-child(5) { width: 12rem; max-width: 12rem; }
+thead th:nth-child(6) { width: 20rem; max-width: 20rem; }
+thead th:nth-child(7) { width: 24rem; max-width: 24rem; }
+thead th:nth-child(8) { width: 10rem; max-width: 10rem; }
+thead th:nth-child(9) { width: 6rem; max-width: 6rem; }
+thead th:nth-child(10) { width: 7rem; max-width: 7rem; }
+thead th:nth-child(11) { width: 7rem; max-width: 7rem; }
+thead th:nth-child(12) { width: 7rem; max-width: 7rem; }
+thead th:nth-child(13) { width: 12rem; max-width: 12rem; }
+thead th:nth-child(14) { width: 14rem; max-width: 14rem; }
+thead th:nth-child(15) { width: 4.5rem; max-width: 4.5rem; }
 
 thead th,
 tbody td {
@@ -970,13 +979,12 @@ tbody td {
 
 thead th { min-width: 0; }
 
-.desc-cell { max-width: 28ch; }
-
 tbody td {
   border-bottom: 1px solid var(--table-row-line);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   vertical-align: top;
-  padding: 0.68rem 0.72rem;
+  padding: 0.42rem 0.56rem;
+  line-height: 1.24;
 }
 
 tbody tr:hover {
@@ -996,7 +1004,11 @@ tbody tr.is-selected {
 }
 
 .desc-cell {
-  max-width: 36ch;
+  max-width: 34ch;
+}
+
+.title-cell {
+  max-width: 28ch;
 }
 
 .budget-cell {
@@ -1031,14 +1043,29 @@ tbody tr.is-selected {
   line-height: 1.2;
 }
 
-.desc-preview {
+.desc-preview,
+.title-preview {
   margin: 0;
   color: var(--desc-preview-color);
-  line-height: 1.35;
+  line-height: 1.25;
+}
+
+.desc-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.title-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .desc-more-btn {
-  margin-top: 0.32rem;
+  margin-top: 0.2rem;
   border: 0;
   padding: 0;
   background: transparent;
