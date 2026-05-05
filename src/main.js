@@ -80,7 +80,7 @@ const I18N = {
     filterSelectedCount: "{count} selected",
     filterSelectAll: "Select all",
     filterReset: "Clear",
-    filterApply: "Apply filters",
+    filterApply: "Apply selected",
     filterNoOptions: "No options",
     filterNoNumeric: "No numeric data",
     filterIncludeNA: "Include N/A",
@@ -137,7 +137,7 @@ const I18N = {
     filterSelectedCount: "{count} selectate",
     filterSelectAll: "Selecteaza tot",
     filterReset: "Reseteaza",
-    filterApply: "Aplica filtrele",
+    filterApply: "Aplica selectia",
     filterNoOptions: "Fara optiuni",
     filterNoNumeric: "Nu exista date numerice",
     filterIncludeNA: "Include N/A",
@@ -573,6 +573,7 @@ function applyDraftFilters() {
   state.appliedColumnFilters = cloneColumnFilters(state.columnFilters);
   state.filtersDirty = false;
   state.filtersOpen = false;
+  state.openMultiselectColumn = null;
   state.page = 1;
   renderFiltersPanel();
   renderRows();
