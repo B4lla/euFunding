@@ -3,18 +3,23 @@ const CONFIG = {
   API_KEY: "SEDIA",
   SEARCH_TEXT: "***",
   MAX_SEARCH_LENGTH: 120,
-  DEFAULT_PAGE_SIZE: 25,
-  MAX_PAGE_SIZE: 1000,
-  LIVE_FETCH_PAGE_SIZE: Number.parseInt(process.env.EU_API_PAGE_SIZE || "50", 10),
-  LIVE_MAX_CALLS: Number.parseInt(process.env.EU_API_MAX_CALLS || "80", 10),
-  REQUEST_TIMEOUT_MS: Number.parseInt(process.env.EU_API_REQUEST_TIMEOUT_MS || "45000", 10),
-  REQUEST_RETRIES: Number.parseInt(process.env.EU_API_REQUEST_RETRIES || "4", 10),
-  REQUEST_RETRY_DELAY_MS: Number.parseInt(process.env.EU_API_REQUEST_RETRY_DELAY_MS || "1500", 10),
-  CACHE_TTL_MS: Number.parseInt(process.env.EU_API_CACHE_TTL_SECONDS || String(30 * 60), 10) * 1000,
+  DEFAULT_PAGE_SIZE: 100,
+  MAX_PAGE_SIZE: 100,
+  REQUEST_TIMEOUT_MS: Number.parseInt(process.env.EU_API_REQUEST_TIMEOUT_MS || "10000", 10),
+  REQUEST_RETRIES: Number.parseInt(process.env.EU_API_REQUEST_RETRIES || "1", 10),
+  REQUEST_RETRY_DELAY_MS: Number.parseInt(process.env.EU_API_REQUEST_RETRY_DELAY_MS || "500", 10),
+  CACHE_TTL_MS: Number.parseInt(process.env.EU_API_CACHE_TTL_SECONDS || String(12 * 60 * 60), 10) * 1000,
 };
+
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
+const PROGRAMME_PERIOD = "2021 - 2027";
+const STATUS_FORTHCOMING = "31094501";
+const STATUS_OPEN = "31094502";
+const STATUS_CLOSED = "31094503";
+
 const SEARCH_COLUMNS = [
   "Programme",
+  "Programme code",
   "Type of Action",
   "Topic code",
   "Topic title",
@@ -25,20 +30,29 @@ const SEARCH_COLUMNS = [
   "Stages",
   "Opening date",
   "Deadline",
+  "Domains",
+  "Subdomains",
   "CAll link",
 ];
-const PROGRAMME_PERIOD = "2021 - 2027";
-const STATUS_FORTHCOMING = "31094501";
-const STATUS_OPEN = "31094502";
 
 const PROGRAMME_CODE_MAP = {
   "43108390": "Horizon Europe",
+  "43298916": "Euratom Research and Training Programme",
   "43152860": "Digital Europe",
   "43251589": "Citizens, Equality, Rights and Values",
   "43252413": "LIFE",
   "43251567": "Connecting Europe Facility",
   "43252444": "Single Market Programme",
   "43251814": "Creative Europe",
+  "43251801": "Erasmus+",
+  "43251792": "European Solidarity Corps",
+  "43252405": "EU4Health",
+  "43251582": "Justice Programme",
+  "43251842": "Asylum, Migration and Integration Fund",
+  "43251849": "Internal Security Fund",
+  "43251833": "European Defence Fund",
+  "43251821": "Space Programme",
+  "43332642": "Innovation Fund",
 };
 
 const ACTION_TYPE_CODE_MAP = {
@@ -48,10 +62,90 @@ const ACTION_TYPE_CODE_MAP = {
   "8": "Grant",
 };
 
-const STATE = {
-  datasetCache: null,
-  datasetPromise: null,
-};
+const DOMAIN_RULES = [
+  {
+    domain: "Digital",
+    subdomains: [
+      ["Artificial intelligence", /\b(ai|artificial intelligence|machine learning|algorithm|robotics)\b/i],
+      ["Cybersecurity", /\b(cyber|security operation centre|soc|encryption|incident response)\b/i],
+      ["Data and cloud", /\b(data space|dataspace|cloud|edge|interoperab|data sharing|big data)\b/i],
+      ["Semiconductors", /\b(chip|semiconductor|microelectronic|processor|quantum chip)\b/i],
+      ["Connectivity", /\b(5g|6g|broadband|connectivity|telecom|network)\b/i],
+    ],
+  },
+  {
+    domain: "Health",
+    subdomains: [
+      ["Public health", /\b(health|healthcare|patient|hospital|disease|pandemic|vaccine|medical)\b/i],
+      ["Cancer", /\b(cancer|oncology|tumou?r)\b/i],
+      ["Biotechnology", /\b(biotech|biotechnology|genomic|biomarker|clinical trial)\b/i],
+      ["Mental health", /\b(mental health|wellbeing|psychological)\b/i],
+    ],
+  },
+  {
+    domain: "Energy",
+    subdomains: [
+      ["Renewables", /\b(renewable|solar|wind|photovoltaic|geothermal|hydropower)\b/i],
+      ["Hydrogen", /\b(hydrogen|electrolyser|fuel cell)\b/i],
+      ["Nuclear", /\b(nuclear|euratom|radiation|radioactive|fission|fusion)\b/i],
+      ["Energy systems", /\b(energy|electricity|grid|storage|battery|heating|cooling)\b/i],
+    ],
+  },
+  {
+    domain: "Climate and environment",
+    subdomains: [
+      ["Climate", /\b(climate|decarboni|carbon|emission|greenhouse)\b/i],
+      ["Biodiversity", /\b(biodiversity|ecosystem|nature|species|habitat)\b/i],
+      ["Circular economy", /\b(circular|recycling|waste|reuse|resource efficiency)\b/i],
+      ["Water and oceans", /\b(water|marine|ocean|sea|coastal|river)\b/i],
+    ],
+  },
+  {
+    domain: "Transport and mobility",
+    subdomains: [
+      ["Urban mobility", /\b(mobility|urban transport|eit urban)\b/i],
+      ["Rail", /\b(rail|railway|train)\b/i],
+      ["Aviation", /\b(aviation|aircraft|aerospace|airport)\b/i],
+      ["Maritime", /\b(maritime|shipping|vessel|port)\b/i],
+      ["Road transport", /\b(road|vehicle|automotive|charging infrastructure)\b/i],
+    ],
+  },
+  {
+    domain: "Industry and space",
+    subdomains: [
+      ["Manufacturing", /\b(manufactur|factory|industrial|production line)\b/i],
+      ["Materials", /\b(material|raw material|steel|polymer|composite)\b/i],
+      ["Space", /\b(space|satellite|copernicus|galileo|earth observation)\b/i],
+      ["Construction", /\b(construction|built environment|building|renovation)\b/i],
+    ],
+  },
+  {
+    domain: "Security and defence",
+    subdomains: [
+      ["Defence", /\b(defence|defense|military|dual use|edf)\b/i],
+      ["Civil security", /\b(civil security|border|crisis|disaster|resilience|law enforcement)\b/i],
+    ],
+  },
+  {
+    domain: "Food and bioeconomy",
+    subdomains: [
+      ["Agriculture", /\b(agri|agriculture|farm|soil|crop|livestock)\b/i],
+      ["Food systems", /\b(food|nutrition|aquaculture|fisheries)\b/i],
+      ["Bioeconomy", /\b(bioeconomy|biobased|bio-based|forestry)\b/i],
+    ],
+  },
+  {
+    domain: "Society and governance",
+    subdomains: [
+      ["Democracy and rights", /\b(democracy|rights|citizen|equality|inclusion|migration)\b/i],
+      ["Culture and creativity", /\b(culture|creative|media|heritage|arts)\b/i],
+      ["Education and skills", /\b(education|training|skills|learning|erasmus)\b/i],
+      ["Research ecosystem", /\b(research infrastructure|widening|era|researcher|innovation ecosystem)\b/i],
+    ],
+  },
+];
+
+const PAGE_CACHE = new Map();
 
 module.exports = async function handler(req, res) {
   if (req.method !== "GET") {
@@ -59,46 +153,35 @@ module.exports = async function handler(req, res) {
   }
 
   const query = req.query || {};
-  const forceRefresh = isTruthyFlag(query.refresh);
-  const wantsAll = isTruthyFlag(query.all);
   const pagination = parsePagination(query);
   const searchText = parseSearchText(query);
+  const forceRefresh = isTruthyFlag(query.refresh);
+  const includeClosed = isTruthyFlag(query.includeClosed);
 
   try {
-    const dataset = await getLiveDataset(forceRefresh);
-    const filteredItems = searchText ? dataset.items.filter((row) => rowMatchesSearch(row, searchText)) : dataset.items;
-    const total = filteredItems.length;
-    const totalPages = Math.max(1, Math.ceil(Math.max(total, 1) / pagination.pageSize));
-    const safePage = Math.min(Math.max(pagination.page, 1), totalPages);
-    const pageItems = wantsAll
-      ? filteredItems
-      : filteredItems.slice((safePage - 1) * pagination.pageSize, safePage * pagination.pageSize);
+    const payload = await getLivePage({
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      searchText,
+      includeClosed,
+      forceRefresh,
+    });
 
+    const filteredItems = searchText ? payload.items.filter((row) => rowMatchesSearch(row, searchText)) : payload.items;
     return writePayload(req, res, {
-      generatedAt: dataset.generatedAt,
-      source: forceRefresh ? "EU Funding & Tenders Search API (live refresh)" : "EU Funding & Tenders Search API (30 min cache)",
+      ...payload,
       query: searchText,
-      total,
-      page: wantsAll ? 1 : safePage,
-      pageSize: wantsAll ? total || pagination.pageSize : pagination.pageSize,
-      totalPages: wantsAll ? 1 : totalPages,
-      limits: {
-        pageSize: CONFIG.LIVE_FETCH_PAGE_SIZE,
-        apiPageSize: CONFIG.LIVE_FETCH_PAGE_SIZE,
-        apiCallsUsed: dataset.apiCallsUsed,
-        apiReportedTotal: dataset.apiReportedTotal,
-        apiReportedPages: dataset.apiReportedPages,
-        cacheTtlMs: CONFIG.CACHE_TTL_MS,
-        searchText: searchText || CONFIG.SEARCH_TEXT,
-        programmePeriod: PROGRAMME_PERIOD,
-      },
-      items: pageItems,
-    }, forceRefresh ? "live-refresh" : "live-cache");
+      total: filteredItems.length,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      totalPages: payload.apiReportedPages,
+      items: filteredItems,
+    }, forceRefresh ? "eu-live-page-refresh" : "eu-live-page");
   } catch (error) {
     return writeJson(res, 503, {
-      error: "Could not load live EU calls",
+      error: "Could not load EU calls page",
       message: error && error.message ? error.message : String(error),
-    }, "live-error");
+    }, "eu-live-error");
   }
 };
 
@@ -136,40 +219,63 @@ function rowMatchesSearch(row, searchText) {
   return false;
 }
 
-function readDatasetCache() {
-  const entry = STATE.datasetCache;
+function cacheKey({ page, pageSize, searchText, includeClosed }) {
+  return JSON.stringify({ page, pageSize, searchText, includeClosed });
+}
+
+function readPageCache(key) {
+  const entry = PAGE_CACHE.get(key);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    STATE.datasetCache = null;
+    PAGE_CACHE.delete(key);
     return null;
   }
   return entry.payload;
 }
 
-function setDatasetCache(payload) {
-  STATE.datasetCache = {
+function setPageCache(key, payload) {
+  PAGE_CACHE.set(key, {
     expiresAt: Date.now() + CONFIG.CACHE_TTL_MS,
     payload,
-  };
+  });
 }
 
-async function getLiveDataset(forceRefresh = false) {
-  if (!forceRefresh) {
-    const cached = readDatasetCache();
+async function getLivePage(options) {
+  const key = cacheKey(options);
+  if (!options.forceRefresh) {
+    const cached = readPageCache(key);
     if (cached) return cached;
-    if (STATE.datasetPromise) return STATE.datasetPromise;
   }
 
-  STATE.datasetPromise = buildLiveDataset()
-    .then((payload) => {
-      setDatasetCache(payload);
-      return payload;
-    })
-    .finally(() => {
-      STATE.datasetPromise = null;
-    });
+  const page = await fetchPage(options.page, options.pageSize, CONFIG.REQUEST_TIMEOUT_MS, options.searchText);
+  const items = [];
+  appendNormalizedItems(items, page.items, options.includeClosed);
 
-  return STATE.datasetPromise;
+  const reportedTotal = Number(page.totalResults || page.items.length || 0);
+  const reportedPages = Math.max(1, Math.ceil(Math.max(reportedTotal, page.items.length, 1) / options.pageSize));
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    source: "EU Funding & Tenders Search API (paged live)",
+    apiReportedTotal: reportedTotal,
+    apiReportedPages: reportedPages,
+    apiCallsUsed: 1,
+    scannedPage: options.page,
+    limits: {
+      pageSize: options.pageSize,
+      apiPageSize: options.pageSize,
+      apiCallsUsed: 1,
+      apiReportedTotal: reportedTotal,
+      apiReportedPages: reportedPages,
+      cacheTtlMs: CONFIG.CACHE_TTL_MS,
+      searchText: options.searchText || CONFIG.SEARCH_TEXT,
+      programmePeriod: PROGRAMME_PERIOD,
+      includeClosed: options.includeClosed,
+    },
+    items,
+  };
+
+  setPageCache(key, payload);
+  return payload;
 }
 
 function buildSearchQuery() {
@@ -184,47 +290,13 @@ function buildSearchQuery() {
   };
 }
 
-async function buildLiveDataset() {
-  const pageSize = Math.max(1, Math.min(CONFIG.LIVE_FETCH_PAGE_SIZE || 50, 100));
-  const first = await fetchPage(1, pageSize, CONFIG.REQUEST_TIMEOUT_MS, CONFIG.SEARCH_TEXT);
-  if (!first) throw new Error("The first EU API page failed");
-
-  const reportedTotal = Number(first.totalResults || first.items.length || 0);
-  const reportedPages = Math.max(1, Math.ceil(Math.max(reportedTotal, first.items.length, 1) / pageSize));
-  const maxPages = Math.min(reportedPages, CONFIG.LIVE_MAX_CALLS);
-  const items = [];
-  let apiCallsUsed = 1;
-
-  appendNormalizedItems(items, first.items, 0);
-
-  for (let page = 2; page <= maxPages; page += 1) {
-    const result = await fetchPage(page, pageSize, CONFIG.REQUEST_TIMEOUT_MS, CONFIG.SEARCH_TEXT);
-    apiCallsUsed += 1;
-    if (!result || !Array.isArray(result.items)) {
-      throw new Error(`EU API page ${page}/${maxPages} failed`);
-    }
-    appendNormalizedItems(items, result.items, items.length);
-  }
-
-  if (reportedTotal > 0 && items.length < Math.floor(reportedTotal * 0.95)) {
-    throw new Error(`Fetched ${items.length} rows, but the EU API reported ${reportedTotal}. Refusing to publish partial live data.`);
-  }
-
-  return {
-    generatedAt: new Date().toISOString(),
-    apiReportedTotal: reportedTotal,
-    apiReportedPages: reportedPages,
-    apiCallsUsed,
-    items,
-  };
-}
-
-function appendNormalizedItems(out, rawItems, offset) {
+function appendNormalizedItems(out, rawItems, includeClosed) {
   if (!Array.isArray(rawItems)) return;
   for (const item of rawItems) {
     const row = normalizeItem(item);
     if (!row) continue;
-    row._apiOrdinal = offset + out.length + 1;
+    if (!includeClosed && row._statusLabel === "closed") continue;
+    row._apiOrdinal = out.length + 1;
     out.push(row);
   }
 }
@@ -233,9 +305,7 @@ async function fetchPage(pageNumber, pageSize, timeoutMs, searchText = "") {
   let lastError = null;
   for (let attempt = 1; attempt <= Math.max(1, CONFIG.REQUEST_RETRIES); attempt += 1) {
     try {
-      const result = await fetchPageOnce(pageNumber, pageSize, timeoutMs, searchText);
-      if (result) return result;
-      lastError = new Error(`Empty response for page ${pageNumber}`);
+      return await fetchPageOnce(pageNumber, pageSize, timeoutMs, searchText);
     } catch (error) {
       lastError = error;
     }
@@ -303,34 +373,41 @@ function normalizeItem(item) {
   if (!topicCode) return null;
 
   const action = extractActionMetadata(md);
-  const statusInfo = resolveStatus(md, action.status);
-  const statusLabel = normalizeStatusLabel(statusInfo.label);
-  const deadlineIso = toIsoDate(firstNonEmpty(action.deadline, stripHtml(pickMeta(md, "deadlineDate"))));
+  const deadlineIso = toLatestIsoDate(action.deadlines);
   const openingIso = toIsoDate(firstNonEmpty(action.openingDate, stripHtml(pickMeta(md, "openingDate")), stripHtml(pickMeta(md, "plannedOpeningDate"))));
+  const statusInfo = resolveStatus(md, action.status, action.deadlines);
+  const statusLabel = normalizeStatusLabel(statusInfo.label);
 
-  const fullDescription = firstNonEmpty(stripHtml(pickMeta(md, "descriptionByte")), stripHtml(item.summary), stripHtml(item.content), "N/A");
+  const fullDescription = firstNonEmpty(stripHtml(pickMeta(md, "descriptionByte")), stripHtml(pickMeta(md, "description")), stripHtml(item.summary), stripHtml(item.content), "N/A");
   const budget = extractBudgetInfo(md, fullDescription, statusLabel);
-
   const programmeRaw = firstNonEmpty(stripHtml(pickMeta(md, "frameworkProgramme")), stripHtml(pickMeta(md, "programme")));
+  const programmeCode = extractProgrammeCode(programmeRaw);
   const actionRaw = firstNonEmpty(stripHtml(pickMeta(md, "typesOfAction")), stripHtml(pickMeta(md, "type")));
+  const title = firstNonEmpty(stripHtml(pickMeta(md, "title")), stripHtml(pickMeta(md, "callTitle")), stripHtml(item.title), stripHtml(item.summary), topicCode);
+  const tags = tagCall({ topicCode, title, fullDescription, programme: mapProgramme(programmeRaw, topicCode) });
 
   return {
     Programme: nonEmptyOrNA(mapProgramme(programmeRaw, topicCode)),
+    "Programme code": nonEmptyOrNA(programmeCode),
     "Type of Action": nonEmptyOrNA(mapActionType(actionRaw)),
     "Topic code": nonEmptyOrNA(topicCode),
-    "Topic title": nonEmptyOrNA(truncate(firstNonEmpty(stripHtml(pickMeta(md, "title")), stripHtml(item.title), stripHtml(item.summary), topicCode), 220)),
+    "Topic title": nonEmptyOrNA(truncate(title, 220)),
     "Topic description": nonEmptyOrNA(truncate(fullDescription, 1200)),
     "Topic description full": nonEmptyOrNA(truncate(fullDescription, 12000)),
     "Budget (EUR) - Year : 2026": nonEmptyOrNA(budget.amount),
-    Status: statusLabel === "forthcoming" ? "Forthcoming" : statusLabel === "open" ? "Open" : "N/A",
+    Status: statusLabel === "forthcoming" ? "Forthcoming" : statusLabel === "open" ? "Open" : statusLabel === "closed" ? "Closed" : "N/A",
     _statusLabel: statusLabel,
     _statusCode: statusInfo.code || "",
+    _statusReason: statusInfo.reason || "",
+    _programmeCode: programmeCode,
     _budgetEstimated: Boolean(budget.isEstimated),
     _budgetSourceYear: budget.sourceYear || "",
     _budgetFallbackWarning: budget.warning || "",
     Stages: nonEmptyOrNA(stripHtml(pickMeta(md, "stages")) || action.stages),
     "Opening date": nonEmptyOrNA(openingIso),
     Deadline: nonEmptyOrNA(deadlineIso),
+    Domains: nonEmptyOrNA(tags.domains.join("; ")),
+    Subdomains: nonEmptyOrNA(tags.subdomains.join("; ")),
     "CAll link": nonEmptyOrNA(buildCallLink(topicCode, firstNonEmpty(stripHtml(pickMeta(md, "url")), item.url))),
   };
 }
@@ -339,6 +416,12 @@ function pickMeta(metadata, key) {
   const value = metadata[key];
   if (Array.isArray(value)) return value[0];
   return value;
+}
+
+function pickMetaArray(metadata, key) {
+  const value = metadata[key];
+  if (Array.isArray(value)) return value;
+  return value === undefined || value === null || value === "" ? [] : [value];
 }
 
 function stripHtml(value) {
@@ -380,17 +463,42 @@ function toIsoDate(value) {
   return dt.toISOString().slice(0, 10);
 }
 
+function toLatestIsoDate(values) {
+  const dates = normalizeDateList(values);
+  if (!dates.length) return "N/A";
+  dates.sort((a, b) => b.getTime() - a.getTime());
+  return dates[0].toISOString().slice(0, 10);
+}
+
+function normalizeDateList(values) {
+  const raw = Array.isArray(values) ? values : [values];
+  return raw
+    .flatMap((value) => Array.isArray(value) ? value : [value])
+    .map((value) => new Date(String(value || "").slice(0, 10)))
+    .filter((date) => !Number.isNaN(date.getTime()));
+}
+
+function extractProgrammeCode(raw) {
+  const value = String(raw || "").trim();
+  if (PROGRAMME_CODE_MAP[value]) return value;
+  return "";
+}
+
 function mapProgramme(raw, topicCode) {
   const value = String(raw || "").trim();
   if (PROGRAMME_CODE_MAP[value]) return PROGRAMME_CODE_MAP[value];
-  if (value) return value;
+  if (value && !/^\d+$/.test(value)) return value;
 
   const upper = String(topicCode || "").toUpperCase();
+  if (upper.startsWith("HORIZON-EURATOM-")) return "Euratom Research and Training Programme";
   if (upper.startsWith("HORIZON-")) return "Horizon Europe";
   if (upper.startsWith("LIFE-")) return "LIFE";
   if (upper.startsWith("DIGITAL-")) return "Digital Europe";
   if (upper.startsWith("CEF-")) return "Connecting Europe Facility";
-  return "N/A";
+  if (upper.startsWith("EU4H-")) return "EU4Health";
+  if (upper.startsWith("CREA-")) return "Creative Europe";
+  if (upper.startsWith("ERASMUS-")) return "Erasmus+";
+  return value || "N/A";
 }
 
 function mapActionType(raw) {
@@ -420,26 +528,43 @@ function buildCallLink(topicCode, candidateUrl) {
   return fallback;
 }
 
-function resolveStatus(metadata, actionStatusRaw) {
+function resolveStatus(metadata, actionStatusRaw, deadlineValues) {
+  const deadlineStatus = statusFromDates(deadlineValues);
+  if (deadlineStatus) return deadlineStatus;
+
   const metaStatus = String(stripHtml(pickMeta(metadata, "status"))).trim();
   if (metaStatus === STATUS_FORTHCOMING) {
-    return { code: STATUS_FORTHCOMING, label: "forthcoming" };
+    return { code: STATUS_FORTHCOMING, label: "forthcoming", reason: "metadata status" };
   }
   if (metaStatus === STATUS_OPEN) {
-    return { code: STATUS_OPEN, label: "open" };
+    return { code: STATUS_OPEN, label: "open", reason: "metadata status" };
+  }
+  if (metaStatus === STATUS_CLOSED) {
+    return { code: STATUS_CLOSED, label: "closed", reason: "metadata status" };
   }
 
   const actionStatus = String(actionStatusRaw || "").toLowerCase();
   if (actionStatus.includes("forthcoming")) {
-    return { code: STATUS_FORTHCOMING, label: "forthcoming" };
+    return { code: STATUS_FORTHCOMING, label: "forthcoming", reason: "action status" };
   }
   if (actionStatus.includes("open")) {
-    return { code: STATUS_OPEN, label: "open" };
+    return { code: STATUS_OPEN, label: "open", reason: "action status" };
   }
   if (actionStatus.includes("closed")) {
-    return { code: "31094503", label: "closed" };
+    return { code: STATUS_CLOSED, label: "closed", reason: "action status" };
   }
-  return { code: metaStatus || "", label: "unknown" };
+  return { code: metaStatus || "", label: "unknown", reason: "unknown" };
+}
+
+function statusFromDates(values) {
+  const dates = normalizeDateList(values);
+  if (!dates.length) return null;
+
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const hasFutureDeadline = dates.some((date) => date.getTime() >= todayUtc);
+  if (hasFutureDeadline) return { code: STATUS_OPEN, label: "open", reason: "future deadline" };
+  return { code: STATUS_CLOSED, label: "closed", reason: "all deadlines passed" };
 }
 
 function extractBudgetInfo(metadata, fullDescription, statusLabel) {
@@ -625,14 +750,15 @@ function findBudgetInTextForYear(text, year) {
   const plain = String(text || "").replace(/\s+/g, " ");
   if (!plain || !plain.includes(yearText)) return null;
 
-  const yearFirstRegex = new RegExp(`${yearText}[^\\d€]{0,90}([€]?\\s?\\d[\\d\\s.,]{2,})\\s*(EUR|€)?`, "i");
+  const euro = "\\u20ac";
+  const yearFirstRegex = new RegExp(`${yearText}[^\\d${euro}]{0,90}([${euro}]?\\s?\\d[\\d\\s.,]{2,})\\s*(EUR|${euro})?`, "i");
   const yearFirst = plain.match(yearFirstRegex);
   if (yearFirst && yearFirst[1]) {
     const numeric = amountToMoneyString(yearFirst[1]);
     if (numeric) return numeric;
   }
 
-  const amountFirstRegex = new RegExp(`([€]?\\s?\\d[\\d\\s.,]{2,})\\s*(EUR|€)[^\\d]{0,80}${yearText}`, "i");
+  const amountFirstRegex = new RegExp(`([${euro}]?\\s?\\d[\\d\\s.,]{2,})\\s*(EUR|${euro})[^\\d]{0,80}${yearText}`, "i");
   const amountFirst = plain.match(amountFirstRegex);
   if (amountFirst && amountFirst[1]) {
     const numeric = amountToMoneyString(amountFirst[1]);
@@ -654,25 +780,39 @@ function stringifyValue(value) {
 
 function extractActionMetadata(metadata) {
   const parsed = parseMaybeJson(pickMeta(metadata, "actions"));
+  const metadataDeadlines = [
+    ...pickMetaArray(metadata, "deadlineDate"),
+    ...pickMetaArray(metadata, "closingDate"),
+  ];
+
   if (!Array.isArray(parsed) || parsed.length === 0) {
     return {
       status: "",
-      openingDate: "",
-      deadline: "",
+      openingDate: firstNonEmpty(stripHtml(pickMeta(metadata, "startDate")), stripHtml(pickMeta(metadata, "openingDate"))),
+      deadlines: metadataDeadlines,
       stages: "N/A",
     };
   }
 
-  const first = parsed[0] || {};
-  const status = String(first.status?.abbreviation || first.status?.label || first.status || "").toLowerCase();
-  const openingDate = first.openingDate || first.plannedOpeningDate || first.startDate || first.publicationDate || "";
-  const deadline = (Array.isArray(first.deadlineDates) && first.deadlineDates[0]) || first.deadlineDate || first.submissionDeadline || "";
-  const stages = parsed.map((x) => x.stage || x.stageLabel || x.stageCode || "").filter(Boolean);
+  const deadlines = [...metadataDeadlines];
+  const stages = [];
+  let openingDate = "";
+  let status = "";
+
+  for (const action of parsed) {
+    status ||= String(action.status?.abbreviation || action.status?.label || action.status || "").toLowerCase();
+    openingDate ||= action.openingDate || action.plannedOpeningDate || action.startDate || action.publicationDate || "";
+    if (Array.isArray(action.deadlineDates)) deadlines.push(...action.deadlineDates);
+    if (action.deadlineDate) deadlines.push(action.deadlineDate);
+    if (action.submissionDeadline) deadlines.push(action.submissionDeadline);
+    const stage = action.stage || action.stageLabel || action.stageCode || "";
+    if (stage) stages.push(stage);
+  }
 
   return {
     status,
     openingDate,
-    deadline,
+    deadlines,
     stages: stages.length ? stages.join(" | ") : String(parsed.length),
   };
 }
@@ -695,6 +835,49 @@ function normalizeStatusLabel(label) {
   if (status === "forthcoming" || status.includes("forthcoming")) return "forthcoming";
   if (status === "closed" || status.includes("closed")) return "closed";
   return "unknown";
+}
+
+function tagCall({ topicCode, title, fullDescription, programme }) {
+  const text = [topicCode, title, fullDescription, programme].join(" ");
+  const scored = [];
+  const subdomains = [];
+
+  for (const rule of DOMAIN_RULES) {
+    let score = 0;
+    const matchedSubdomains = [];
+    for (const [subdomain, regex] of rule.subdomains) {
+      if (regex.test(text)) {
+        score += 1;
+        matchedSubdomains.push(subdomain);
+      }
+    }
+    if (score > 0) {
+      scored.push({ domain: rule.domain, score });
+      subdomains.push(...matchedSubdomains);
+    }
+  }
+
+  if (/^DIGITAL-/i.test(topicCode)) scored.push({ domain: "Digital", score: 2 });
+  if (/^EU4H-/i.test(topicCode)) scored.push({ domain: "Health", score: 2 });
+  if (/^LIFE-/i.test(topicCode)) scored.push({ domain: "Climate and environment", score: 2 });
+  if (/^CEF-/i.test(topicCode)) scored.push({ domain: "Transport and mobility", score: 1 });
+  if (/^HORIZON-EURATOM-/i.test(topicCode)) {
+    scored.push({ domain: "Energy", score: 2 });
+    subdomains.push("Nuclear");
+  }
+
+  const domainTotals = new Map();
+  for (const entry of scored) {
+    domainTotals.set(entry.domain, (domainTotals.get(entry.domain) || 0) + entry.score);
+  }
+
+  const domains = Array.from(domainTotals.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([domain]) => domain);
+
+  const uniqueSubdomains = Array.from(new Set(subdomains)).slice(0, 6);
+  return { domains, subdomains: uniqueSubdomains };
 }
 
 function buildEtag(payload) {

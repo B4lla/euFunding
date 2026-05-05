@@ -2,6 +2,7 @@ import "./style.css";
 
 const COLUMN_ORDER = [
   "Programme",
+  "Programme code",
   "Type of Action",
   "Topic code",
   "Topic title",
@@ -11,6 +12,8 @@ const COLUMN_ORDER = [
   "Stages",
   "Opening date",
   "Deadline",
+  "Domains",
+  "Subdomains",
   "CAll link",
 ];
 const DESCRIPTION_COLUMN = "Topic description";
@@ -19,9 +22,9 @@ const BUDGET_COLUMN = "Budget (EUR) - Year : 2026";
 const STATUS_COLUMN = "Status";
 const DESCRIPTION_PREVIEW_LENGTH = 220;
 const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
-const LIVE_DATA_ENDPOINT = "/api/calls?all=1";
+const LIVE_DATA_ENDPOINT = "/api/calls";
 const SNAPSHOT_MANIFEST_CANDIDATES = [];
-const SNAPSHOT_URL_CANDIDATES = [LIVE_DATA_ENDPOINT];
+const SNAPSHOT_URL_CANDIDATES = [];
 
 const CACHE_KEY = "eu-calls-live-cache-v3";
 const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -241,7 +244,7 @@ function normalizeFilterValue(value) {
 }
 
 const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming"];
-const MULTISELECT_COLUMNS = new Set([STATUS_COLUMN, "Stages", "Programme", "Type of Action"]);
+const MULTISELECT_COLUMNS = new Set([STATUS_COLUMN, "Stages", "Programme", "Programme code", "Type of Action", "Domains", "Subdomains"]);
 
 function canonicalizeSelectValue(value) {
   return normalizeFilterValue(value)
@@ -317,7 +320,10 @@ function createDefaultFilterState(column) {
     case STATUS_COLUMN:
     case "Stages":
     case "Programme":
+    case "Programme code":
     case "Type of Action":
+    case "Domains":
+    case "Subdomains":
       return { kind: "select", values: getDefaultSelectValues(column), includeNA: false };
     case "Topic code":
       return { kind: "text", value: "" };
@@ -387,6 +393,9 @@ function normalizeClientRow(row) {
   const normalized = row && typeof row === "object" ? { ...row } : {};
   normalized[DESCRIPTION_COLUMN] = sanitize(normalized[DESCRIPTION_COLUMN]);
   normalized["CAll link"] = normalizeCallLink(normalized["Topic code"], normalized["CAll link"]);
+  normalized["Programme code"] = sanitize(normalized["Programme code"] || normalized._programmeCode);
+  normalized.Domains = sanitize(normalized.Domains);
+  normalized.Subdomains = sanitize(normalized.Subdomains);
   if (!String(normalized[FULL_DESCRIPTION_FIELD] || "").trim()) {
     normalized[FULL_DESCRIPTION_FIELD] = normalized[DESCRIPTION_COLUMN];
   }
@@ -1841,14 +1850,11 @@ async function fetchSnapshotPayload(forceRefresh = false) {
 }
 
 async function fetchAllApiRows(forceRefresh = false) {
-  const query = refs.searchInput.value.trim();
-
   const buildLivePageUrl = (page) => {
     const params = new URLSearchParams({
       page: String(page),
       pageSize: String(EXPORT_FETCH_PAGE_SIZE),
     });
-    if (query) params.set("q", query);
     if (forceRefresh) params.set("refresh", "1");
     return "/api/calls?" + params.toString();
   };
@@ -1863,10 +1869,11 @@ async function fetchAllApiRows(forceRefresh = false) {
   if (!firstData || !Array.isArray(firstData.items)) return null;
 
   const items = [...firstData.items];
-  const totalPages = Math.max(1, Number(firstData.totalPages || 1));
+  const totalPages = Math.max(1, Number(firstData.limits?.apiReportedPages || firstData.apiReportedPages || firstData.totalPages || 1));
   const cappedPages = Math.min(totalPages, 200);
 
   for (let page = 2; page <= cappedPages; page += 1) {
+    if (refs.statusText) refs.statusText.textContent = `${t("statusLoading")} ${page}/${cappedPages}`;
     const pageRes = await fetchWithTimeout(buildLivePageUrl(page), {
       headers: { Accept: "application/json" },
       cache: forceRefresh ? "no-store" : "default",
@@ -1874,7 +1881,7 @@ async function fetchAllApiRows(forceRefresh = false) {
     if (!pageRes.ok) break;
 
     const pageData = await readJsonIfPossible(pageRes);
-    if (!pageData || !Array.isArray(pageData.items) || pageData.items.length === 0) break;
+    if (!pageData || !Array.isArray(pageData.items)) break;
     items.push(...pageData.items);
   }
 
@@ -1882,6 +1889,7 @@ async function fetchAllApiRows(forceRefresh = false) {
 
   return {
     ...firstData,
+    source: firstData.source || "EU Funding & Tenders Search API (paged live)",
     page: 1,
     total: dedupedItems.length,
     totalPages: Math.max(1, Math.ceil(dedupedItems.length / (state.pageSize || PAGE_SIZE))),
@@ -1954,6 +1962,14 @@ async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, 
     if (snapshotData) {
       payload = snapshotData.payload;
       responseSource = snapshotData.responseSource;
+    }
+
+    if (!payload) {
+      const livePayload = await fetchAllApiRows(forceRefresh);
+      if (livePayload && Array.isArray(livePayload.items)) {
+        payload = livePayload;
+        responseSource = "EU Funding & Tenders Search API (paged live)";
+      }
     }
 
     if (!payload) {
