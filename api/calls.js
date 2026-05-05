@@ -54,6 +54,7 @@ const PROGRAMME_CODE_MAP = {
   "43252444": "Single Market Programme",
   "43252476": "Single Market Programme",
   "43252517": "Social Prerogative and Specific Competencies Lines",
+  "43253967": "Renewable Energy Financing Mechanism",
   "43254019": "European Social Fund",
   "43254037": "European Solidarity Corps",
   "43251792": "European Solidarity Corps",
@@ -297,7 +298,7 @@ module.exports = async function handler(req, res) {
   const pagination = parsePagination(query);
   const searchText = parseSearchText(query);
   const forceRefresh = isTruthyFlag(query.refresh);
-  const includeClosed = isTruthyFlag(query.includeClosed);
+  const includeClosed = !isTruthyFlag(query.excludeClosed);
 
   try {
     const payload = await getLivePage({
@@ -709,7 +710,7 @@ function statusFromDates(values) {
   const now = new Date();
   const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const hasFutureDeadline = dates.some((date) => date.getTime() >= todayUtc);
-  if (hasFutureDeadline) return { code: STATUS_OPEN, label: "open", reason: "future deadline" };
+  if (hasFutureDeadline) return null;
   return { code: STATUS_CLOSED, label: "closed", reason: "all deadlines passed" };
 }
 

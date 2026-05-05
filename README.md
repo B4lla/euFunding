@@ -10,7 +10,7 @@ The frontend loads data from the Vercel serverless endpoint in small pages:
 
 The endpoint queries one EU Funding & Tenders Search API page per request. The browser collects all reported API pages and then applies pagination and filters locally. This avoids Vercel's 15 second runtime limit when the deployment cache is empty.
 
-Rows whose latest deadline has already passed are treated as `Closed`, even if the EU search index still reports them as `Open`. The endpoint hides those rows by default so expired calls do not appear in the dashboard. Add `includeClosed=1` only for diagnostics.
+Rows whose latest deadline has already passed are treated as `Closed`, even if the EU search index still reports them as `Open`. The endpoint keeps those rows by default so the dashboard count matches the EU portal's Open/Forthcoming search result count. Add `excludeClosed=1` only if you want to hide expired rows at API level.
 
 The API also enriches rows with:
 
@@ -23,7 +23,7 @@ Programme code mapping includes the provided EU programme code list, plus observ
 
 ## Refresh behavior
 
-- Page load: reads `/api/calls?page=N&pageSize=100` until all EU API pages are scanned, excluding rows whose deadlines have already passed.
+- Page load: reads `/api/calls?page=N&pageSize=100` until all EU API pages are scanned, preserving every raw result returned by the EU Open/Forthcoming search.
 - Automatic refresh: every 30 minutes while the page is visible.
 - Manual refresh button: repeats the paged scan with `refresh=1`.
 - GitHub Actions is not required.
