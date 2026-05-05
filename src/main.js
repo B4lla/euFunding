@@ -250,7 +250,7 @@ function normalizeFilterValue(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming"];
+const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming", "closed"];
 const MULTISELECT_COLUMNS = new Set([STATUS_COLUMN, "Stages", "Programme", "Programme code", "Type of Action", "Domains", "Subdomains"]);
 
 function canonicalizeSelectValue(value) {
