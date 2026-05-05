@@ -184,6 +184,7 @@ const state = {
   activeDescriptionRow: null,
   remoteQuery: "",
   filtersOpen: false,
+  openMultiselectColumn: null,
   columnFilters: Object.create(null),
   appliedColumnFilters: Object.create(null),
   filterMetadata: Object.create(null),
@@ -1419,6 +1420,23 @@ function createColumnFilterControl(col) {
     const details = document.createElement("details");
     details.className = "multiselect";
 
+    if (state.openMultiselectColumn === col) {
+      details.open = true;
+    }
+
+    details.addEventListener("toggle", () => {
+      if (details.open) {
+        state.openMultiselectColumn = col;
+        if (refs.filtersGrid) {
+          for (const other of refs.filtersGrid.querySelectorAll("details.multiselect[open]")) {
+            if (other !== details) other.open = false;
+          }
+        }
+      } else if (state.openMultiselectColumn === col) {
+        state.openMultiselectColumn = null;
+      }
+    });
+
     const summary = document.createElement("summary");
     summary.className = "multiselect-trigger";
     const summaryLabel = document.createElement("span");
@@ -1707,6 +1725,7 @@ function createColumnFilterControl(col) {
 function renderFiltersPanel() {
   if (!refs.filtersGrid) return;
   refs.filtersGrid.innerHTML = "";
+  state.openMultiselectColumn = null;
   const fragment = document.createDocumentFragment();
   for (const col of COLUMN_ORDER) {
     fragment.appendChild(createColumnFilterControl(col));
