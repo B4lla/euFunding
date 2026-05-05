@@ -297,7 +297,7 @@ module.exports = async function handler(req, res) {
   const pagination = parsePagination(query);
   const searchText = parseSearchText(query);
   const forceRefresh = isTruthyFlag(query.refresh);
-  const includeClosed = !isTruthyFlag(query.excludeClosed);
+  const includeClosed = isTruthyFlag(query.includeClosed);
 
   try {
     const payload = await getLivePage({

@@ -494,6 +494,8 @@ select:focus,
 
 
 .filters-panel {
+  position: relative;
+  z-index: 60;
   margin: 0 0 0.75rem;
   padding: 0.9rem;
   border-radius: 14px;
@@ -508,6 +510,13 @@ select:focus,
   justify-content: space-between;
   gap: 0.75rem;
   margin-bottom: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.filters-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
@@ -623,6 +632,7 @@ select:focus,
 
 .table-wrap {
   position: relative;
+  z-index: 1;
   background: linear-gradient(180deg, var(--table-wrap-a), var(--table-wrap-b));
   border: 1px solid var(--glass-stroke);
   border-radius: 16px;

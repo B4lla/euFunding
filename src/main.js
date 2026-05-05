@@ -80,6 +80,7 @@ const I18N = {
     filterSelectedCount: "{count} selected",
     filterSelectAll: "Select all",
     filterReset: "Clear",
+    filterApply: "Apply filters",
     filterNoOptions: "No options",
     filterNoNumeric: "No numeric data",
     filterIncludeNA: "Include N/A",
@@ -136,6 +137,7 @@ const I18N = {
     filterSelectedCount: "{count} selectate",
     filterSelectAll: "Selecteaza tot",
     filterReset: "Reseteaza",
+    filterApply: "Aplica filtrele",
     filterNoOptions: "Fara optiuni",
     filterNoNumeric: "Nu exista date numerice",
     filterIncludeNA: "Include N/A",
@@ -183,7 +185,9 @@ const state = {
   remoteQuery: "",
   filtersOpen: false,
   columnFilters: Object.create(null),
+  appliedColumnFilters: Object.create(null),
   filterMetadata: Object.create(null),
+  filtersDirty: false,
   liveReconcileInFlight: false,
   lastPayloadSource: "",
 };
@@ -202,6 +206,7 @@ const refs = {
   filtersToggleBtn: document.getElementById("filtersToggleBtn"),
   filtersPanel: document.getElementById("filtersPanel"),
   filtersGrid: document.getElementById("filtersGrid"),
+  applyFiltersBtn: document.getElementById("applyFiltersBtn"),
   clearFiltersBtn: document.getElementById("clearFiltersBtn"),
   themeToggleBtn: document.getElementById("themeToggleBtn"),
   tableWrap: document.querySelector(".table-wrap"),
@@ -245,7 +250,7 @@ function normalizeFilterValue(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming", "closed"];
+const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming"];
 const MULTISELECT_COLUMNS = new Set([STATUS_COLUMN, "Stages", "Programme", "Programme code", "Type of Action", "Domains", "Subdomains"]);
 
 function canonicalizeSelectValue(value) {
@@ -344,6 +349,18 @@ function createDefaultFilterState(column) {
   }
 }
 
+function cloneFilterState(filter) {
+  if (!filter || typeof filter !== "object") return filter;
+  return {
+    ...filter,
+    values: Array.isArray(filter.values) ? [...filter.values] : filter.values,
+  };
+}
+
+function cloneColumnFilters(filters) {
+  return Object.fromEntries(COLUMN_ORDER.map((col) => [col, cloneFilterState(filters[col] || createDefaultFilterState(col))]));
+}
+
 function ensureColumnFilters() {
   for (const col of COLUMN_ORDER) {
     const current = state.columnFilters[col];
@@ -357,6 +374,10 @@ function ensureColumnFilters() {
       delete current.value;
       if (typeof current.includeNA !== "boolean") current.includeNA = false;
     }
+  }
+
+  if (!state.appliedColumnFilters || Object.keys(state.appliedColumnFilters).length === 0) {
+    state.appliedColumnFilters = cloneColumnFilters(state.columnFilters);
   }
 }
 
@@ -539,6 +560,22 @@ function applyTheme(theme) {
     refs.themeToggleBtn.setAttribute("aria-label", label);
     refs.themeToggleBtn.setAttribute("title", label);
   }
+}
+
+function markFiltersDirty() {
+  state.filtersDirty = true;
+  state.page = 1;
+  updateFiltersPanelVisibility();
+}
+
+function applyDraftFilters() {
+  state.appliedColumnFilters = cloneColumnFilters(state.columnFilters);
+  state.filtersDirty = false;
+  state.filtersOpen = false;
+  state.page = 1;
+  renderFiltersPanel();
+  renderRows();
+  updateFiltersPanelVisibility();
 }
 
 function toggleTheme() {
@@ -913,7 +950,7 @@ function getColumnMetadata(col) {
   const optionKeys = optionEntries.map(([key]) => key);
   const optionLabelByKey = Object.fromEntries(optionEntries);
   if (col === STATUS_COLUMN) {
-    for (const [key, label] of [["open", "Open"], ["forthcoming", "Forthcoming"]]) {
+    for (const [key, label] of [["open", "Open"], ["forthcoming", "Forthcoming"], ["closed", "Closed"]]) {
       if (!optionLabelByKey[key]) optionLabelByKey[key] = label;
     }
   }
@@ -933,9 +970,9 @@ function getColumnMetadata(col) {
   return meta;
 }
 
-function hasActiveColumnFilters() {
+function hasActiveColumnFilters(filters = state.appliedColumnFilters) {
   return COLUMN_ORDER.some((col) => {
-    const filter = state.columnFilters[col];
+    const filter = filters[col];
     if (!filter || filter.kind === "none") return false;
     if (filter.kind === "text") return Boolean(String(filter.value || "").trim());
     if (filter.kind === "select") {
@@ -953,8 +990,8 @@ function hasActiveColumnFilters() {
   });
 }
 
-function rowMatchesColumnFilter(row, col) {
-  const filter = state.columnFilters[col];
+function rowMatchesColumnFilter(row, col, filters = state.appliedColumnFilters) {
+  const filter = filters[col];
   if (!filter || filter.kind === "none") return true;
 
   const rawValue = col === DESCRIPTION_COLUMN ? getFullDescription(row) : sanitize(row[col]);
@@ -1001,7 +1038,8 @@ function rowMatchesColumnFilter(row, col) {
 function getFilteredRows() {
   const sourceRows = state.showSelectedOnly ? getSelectedRows() : state.allRows;
   const query = normalizeFilterValue(refs.searchInput.value);
-  const hasColumnFilters = hasActiveColumnFilters();
+  const activeFilters = state.appliedColumnFilters || state.columnFilters;
+  const hasColumnFilters = hasActiveColumnFilters(activeFilters);
 
   if (!query && !hasColumnFilters) return sourceRows;
 
@@ -1017,7 +1055,7 @@ function getFilteredRows() {
   }
 
   if (hasColumnFilters) {
-    rows = rows.filter((row) => COLUMN_ORDER.every((col) => rowMatchesColumnFilter(row, col)));
+    rows = rows.filter((row) => COLUMN_ORDER.every((col) => rowMatchesColumnFilter(row, col, activeFilters)));
   }
 
   return rows;
@@ -1287,6 +1325,7 @@ function applyLanguage() {
     refs.tableHeadRow.appendChild(th);
   }
 
+  if (refs.applyFiltersBtn) refs.applyFiltersBtn.textContent = t("filterApply");
   if (refs.clearFiltersBtn) refs.clearFiltersBtn.textContent = t("clearFilters");
   const filterTitle = document.querySelector(".filters-panel-title");
   if (filterTitle) filterTitle.textContent = t("filtersTitle");
@@ -1295,9 +1334,9 @@ function applyLanguage() {
   renderRows();
 }
 
-function countActiveColumnFilters() {
+function countActiveColumnFilters(filters = state.appliedColumnFilters) {
   return COLUMN_ORDER.reduce((acc, col) => {
-    const filter = state.columnFilters[col];
+    const filter = filters[col];
     if (!filter || filter.kind === "none") return acc;
     if (filter.kind === "text") return acc + (String(filter.value || "").trim() ? 1 : 0);
     if (filter.kind === "select") {
@@ -1321,6 +1360,8 @@ function countActiveColumnFilters() {
 
 function clearAllColumnFilters() {
   state.columnFilters = Object.fromEntries(COLUMN_ORDER.map((col) => [col, createDefaultFilterState(col)]));
+  state.appliedColumnFilters = cloneColumnFilters(state.columnFilters);
+  state.filtersDirty = false;
   state.page = 1;
   applyLanguage();
 }
@@ -1329,8 +1370,9 @@ function updateFiltersPanelVisibility() {
   if (!refs.filtersPanel || !refs.filtersToggleBtn) return;
   refs.filtersPanel.hidden = !state.filtersOpen;
   refs.filtersToggleBtn.setAttribute("aria-expanded", String(state.filtersOpen));
-  const count = countActiveColumnFilters();
-  const label = `${state.filtersOpen ? t("filtersHide") : t("filtersShow")}${count ? ` (${t("activeFilters", { count })})` : ""}`;
+  const count = countActiveColumnFilters(state.filtersOpen ? state.columnFilters : state.appliedColumnFilters);
+  const dirty = state.filtersDirty ? "*" : "";
+  const label = `${state.filtersOpen ? t("filtersHide") : t("filtersShow")}${count ? ` (${t("activeFilters", { count })})` : ""}${dirty}`;
   refs.filtersToggleBtn.textContent = label;
 }
 
@@ -1358,9 +1400,7 @@ function createColumnFilterControl(col) {
     input.setAttribute("list", meta.options.length > 0 && meta.options.length <= 120 ? `list-${col}` : "");
     input.addEventListener("input", () => {
       state.columnFilters[col].value = input.value;
-      state.page = 1;
-      renderRows();
-      updateFiltersPanelVisibility();
+      markFiltersDirty();
     });
     filterWrap.appendChild(input);
 
@@ -1400,9 +1440,8 @@ function createColumnFilterControl(col) {
     btnSelectAll.addEventListener("click", (event) => {
       event.preventDefault();
       state.columnFilters[col].values = [...(meta.optionKeys || meta.options.map(canonicalizeSelectValue))];
-      state.page = 1;
       renderFiltersPanel();
-      renderRows();
+      markFiltersDirty();
     });
     const btnClear = document.createElement("button");
     btnClear.type = "button";
@@ -1412,9 +1451,8 @@ function createColumnFilterControl(col) {
       event.preventDefault();
       state.columnFilters[col].values = getDefaultSelectValues(col);
       state.columnFilters[col].includeNA = false;
-      state.page = 1;
       renderFiltersPanel();
-      renderRows();
+      markFiltersDirty();
     });
     actions.append(btnSelectAll, btnClear);
     panel.appendChild(actions);
@@ -1444,9 +1482,7 @@ function createColumnFilterControl(col) {
         else nextValues.delete(optionKey);
         const normalizedNextValues = Array.from(nextValues);
         state.columnFilters[col].values = normalizedNextValues.length ? normalizedNextValues : getDefaultSelectValues(col);
-        state.page = 1;
-        renderRows();
-        updateFiltersPanelVisibility();
+        markFiltersDirty();
         updateSummary();
       });
       const textNode = document.createElement("span");
@@ -1463,9 +1499,7 @@ function createColumnFilterControl(col) {
       checkbox.checked = Boolean(filterState.includeNA);
       checkbox.addEventListener("change", () => {
         state.columnFilters[col].includeNA = checkbox.checked;
-        state.page = 1;
-        renderRows();
-        updateFiltersPanelVisibility();
+        markFiltersDirty();
         updateSummary();
       });
       const textNode = document.createElement("span");
@@ -1504,9 +1538,7 @@ function createColumnFilterControl(col) {
     input.value = filterState.value || "";
     input.addEventListener("input", () => {
       state.columnFilters[col].value = input.value;
-      state.page = 1;
-      renderRows();
-      updateFiltersPanelVisibility();
+      markFiltersDirty();
     });
     filterWrap.appendChild(input);
     if (meta.hasNA) {
@@ -1517,9 +1549,7 @@ function createColumnFilterControl(col) {
       check.checked = Boolean(filterState.includeNA);
       check.addEventListener("change", () => {
         state.columnFilters[col].includeNA = check.checked;
-        state.page = 1;
-        renderRows();
-        updateFiltersPanelVisibility();
+        markFiltersDirty();
       });
       labelNA.appendChild(check);
       labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
@@ -1543,9 +1573,7 @@ function createColumnFilterControl(col) {
         check.checked = Boolean(filterState.includeNA);
         check.addEventListener("change", () => {
           state.columnFilters[col].includeNA = check.checked;
-          state.page = 1;
-          renderRows();
-          updateFiltersPanelVisibility();
+          markFiltersDirty();
         });
         labelNA.appendChild(check);
         labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
@@ -1624,10 +1652,8 @@ function createColumnFilterControl(col) {
       const clampedMax = Math.max(minValue, Math.min(nextMax, maxValue));
       state.columnFilters[col].min = Math.min(clampedMin, clampedMax);
       state.columnFilters[col].max = Math.max(clampedMin, clampedMax);
-      state.page = 1;
       syncRangeUI();
-      renderRows();
-      updateFiltersPanelVisibility();
+      markFiltersDirty();
     }
 
     minRange.addEventListener("input", () => updateRange(Number(minRange.value), Number(maxRange.value)));
@@ -1661,9 +1687,7 @@ function createColumnFilterControl(col) {
       check.checked = Boolean(filterState.includeNA);
       check.addEventListener("change", () => {
         state.columnFilters[col].includeNA = check.checked;
-        state.page = 1;
-        renderRows();
-        updateFiltersPanelVisibility();
+        markFiltersDirty();
       });
       labelNA.appendChild(check);
       labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
@@ -1897,7 +1921,6 @@ async function fetchAllApiRows(forceRefresh = false) {
       pageSize: String(EXPORT_FETCH_PAGE_SIZE),
     });
     if (forceRefresh) params.set("refresh", "1");
-    params.set("includeClosed", "1");
     return "/api/calls?" + params.toString();
   };
 
@@ -2069,7 +2092,7 @@ function getExportValue(row, col) {
 }
 
 async function fetchExportPage(page) {
-  const url = `/api/calls?page=${page}&pageSize=${EXPORT_FETCH_PAGE_SIZE}&includeClosed=1`;
+  const url = `/api/calls?page=${page}&pageSize=${EXPORT_FETCH_PAGE_SIZE}`;
   const res = await fetchWithTimeout(url, {
     headers: {
       Accept: "application/json",
@@ -2201,9 +2224,18 @@ refs.searchInput.addEventListener("input", () => {
 
 if (refs.filtersToggleBtn) {
   refs.filtersToggleBtn.addEventListener("click", () => {
-    state.filtersOpen = !state.filtersOpen;
+    const nextOpen = !state.filtersOpen;
+    if (nextOpen) {
+      state.columnFilters = cloneColumnFilters(state.appliedColumnFilters);
+      state.filtersDirty = false;
+      renderFiltersPanel();
+    }
+    state.filtersOpen = nextOpen;
     updateFiltersPanelVisibility();
   });
+}
+if (refs.applyFiltersBtn) {
+  refs.applyFiltersBtn.addEventListener("click", applyDraftFilters);
 }
 if (refs.clearFiltersBtn) {
   refs.clearFiltersBtn.addEventListener("click", clearAllColumnFilters);
