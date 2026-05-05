@@ -471,7 +471,7 @@ async function fetchPageOnce(pageNumber, pageSize, timeoutMs, searchText = "") {
   });
 
   const body = new FormData();
-  body.append("sort", new Blob([JSON.stringify({ order: "ASC", field: "sortStatus" })], { type: "application/json" }));
+  body.append("sort", new Blob([JSON.stringify({ order: "DESC", field: "startDate" })], { type: "application/json" }));
   body.append("query", new Blob([JSON.stringify(buildSearchQuery())], { type: "application/json" }));
   body.append("languages", new Blob([JSON.stringify(["en"])], { type: "application/json" }));
 
@@ -676,9 +676,6 @@ function buildCallLink(topicCode, candidateUrl) {
 }
 
 function resolveStatus(metadata, actionStatusRaw, deadlineValues) {
-  const deadlineStatus = statusFromDates(deadlineValues);
-  if (deadlineStatus) return deadlineStatus;
-
   const metaStatus = String(stripHtml(pickMeta(metadata, "status"))).trim();
   if (metaStatus === STATUS_FORTHCOMING) {
     return { code: STATUS_FORTHCOMING, label: "forthcoming", reason: "metadata status" };
@@ -700,6 +697,8 @@ function resolveStatus(metadata, actionStatusRaw, deadlineValues) {
   if (actionStatus.includes("closed")) {
     return { code: STATUS_CLOSED, label: "closed", reason: "action status" };
   }
+  const deadlineStatus = statusFromDates(deadlineValues);
+  if (deadlineStatus) return deadlineStatus;
   return { code: metaStatus || "", label: "unknown", reason: "unknown" };
 }
 
