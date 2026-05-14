@@ -1,0 +1,3080 @@
+import "./style.css";
+
+const INTEREST_COLUMN = "Interest";
+const GRANT_CALL_TYPE_COLUMN = "Type of grants call";
+const COLUMN_ORDER = [
+  INTEREST_COLUMN,
+  "Programme",
+  "Programme code",
+  "Type of Action",
+  GRANT_CALL_TYPE_COLUMN,
+  "Topic code",
+  "Topic title",
+  "Topic description",
+  "Budget (EUR) - Year : 2026",
+  "Status",
+  "Stages",
+  "Opening date",
+  "Deadline",
+  "Domains",
+  "Subdomains",
+  "CAll link",
+];
+const TOPIC_TITLE_COLUMN = "Topic title";
+const DESCRIPTION_COLUMN = "Topic description";
+const FULL_DESCRIPTION_FIELD = "Topic description full";
+const BUDGET_COLUMN = "Budget (EUR) - Year : 2026";
+const STATUS_COLUMN = "Status";
+const TITLE_PREVIEW_LENGTH = 68;
+const DESCRIPTION_PREVIEW_LENGTH = 145;
+const PUBLIC_CALL_BASE_URL = "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/";
+const LIVE_DATA_ENDPOINT = "/api/calls";
+const INTEREST_ENDPOINT = "/api/interest";
+const COMPANIES_ENDPOINT = "/api/companies";
+const SNAPSHOT_MANIFEST_CANDIDATES = [];
+const SNAPSHOT_URL_CANDIDATES = [];
+
+const CACHE_KEY = "eu-calls-live-cache-v4";
+const CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const PAGE_SIZE = 25;
+const EXPORT_FETCH_PAGE_SIZE = 100;
+const REQUEST_TIMEOUT_MS = 20000;
+const THEME_KEY = "eu-dashboard-theme";
+const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const MANUAL_REFRESH_COOLDOWN_MS = 60 * 1000;
+const MANUAL_REFRESH_LAST_KEY = "eu-calls-manual-refresh-last";
+const PERSISTENT_REFRESH_CLIENT_COOLDOWN_MS = 10 * 60 * 1000;
+const PERSISTENT_REFRESH_LAST_KEY = "eu-calls-persistent-refresh-last";
+const LIVE_RECONCILE_COOLDOWN_MS = 30 * 60 * 1000;
+const LIVE_RECONCILE_MAX_CODES = 25;
+const LIVE_RECONCILE_CACHE_KEY = "eu-calls-live-reconcile-v1";
+const INTEREST_LOCAL_CACHE_KEY = "eu-calls-interest-cache-v1";
+const INTEREST_DEFAULT = "not_evaluated";
+const INTEREST_LEVELS = [INTEREST_DEFAULT, "high", "medium", "low", "none"];
+const INTEREST_META = {
+  not_evaluated: { label: "Not evaluated", shortLabel: "Not evaluated", className: "interest-not-evaluated" },
+  high: { label: "High interest", shortLabel: "High", className: "interest-high" },
+  medium: { label: "Medium interest", shortLabel: "Medium", className: "interest-medium" },
+  low: { label: "Low interest", shortLabel: "Low", className: "interest-low" },
+  none: { label: "No interest", shortLabel: "No", className: "interest-none" },
+};
+
+let xlsxLoadPromise = null;
+let searchDebounceTimer = null;
+let autoRefreshTimerId = null;
+let autoRefreshInFlight = false;
+let refreshCooldownTimerId = null;
+let filterOptionsRefreshTimerId = null;
+
+const I18N = {
+  en: {
+    title: "EU Calls for Proposals Dashboard",
+    period: "Funding period 2021-2027",
+    language: "Language",
+    searchPlaceholder: "Search by title, code, programme...",
+    refresh: "Refresh live data",
+    refreshSnapshotStarted: "Live data refreshed.",
+    refreshSnapshotSkipped: "Refresh was requested recently, so it was not started again.",
+    refreshCooldown: "Refresh available in {seconds}s",
+    refreshSnapshotNotConfigured: "Live data endpoint is not configured yet.",
+    refreshSnapshotFailed: "The live data refresh could not be completed.",
+    exportCsv: "Export CSV",
+    exportXlsx: "Export Excel",
+    statusLoading: "Loading data...",
+    statusLoaded: "Showing {count} EU-reported Open/Forthcoming calls.",
+    statusEmpty: "No calls available for the current filters.",
+    statusError: "Could not load data.",
+    updatedAt: "Last update: {date}",
+    source: "Source: {source}",
+    openLink: "Open",
+    navCalls: "Calls",
+    navCompanies: "Companies",
+    pageText: "Page {page}/{total}",
+    pageRowsText: "Showing {count} rows on this page.",
+    prev: "Prev",
+    next: "Next",
+    readMore: "Read more",
+    filterPlaceholder: "Filter...",
+    filterAny: "Any",
+    filterSelectedCount: "{count} selected",
+    filterSelectAll: "Select all",
+    filterReset: "Clear",
+    filterApply: "Apply selected",
+    filterNoOptions: "No options",
+    filterNoNumeric: "No numeric data",
+    filterIncludeNA: "Include N/A",
+    rangeMin: "Min",
+    rangeMax: "Max",
+    filtersShow: "Show filters",
+    filtersHide: "Hide filters",
+    filtersTitle: "Column filters",
+    clearFilters: "Clear filters",
+    activeFilters: "{count} active",
+    modalTitle: "Call details",
+    modalClose: "Close",
+    modalTopicCode: "Topic code",
+    modalTopicTitle: "Topic title",
+    modalDeadline: "Deadline",
+    modalCallLink: "Call link",
+    modalDescription: "Topic description",
+    budgetWarningLabel: "Estimated budget",
+    budgetWarningDefault: "2026 budget not published yet. Showing {year} amount.",
+    themeSwitchToDark: "Switch to dark mode",
+    themeSwitchToLight: "Switch to light mode",
+    showSelected: "Show selected ({count})",
+    showAllRows: "Show all",
+    clearSelected: "Clear selected",
+    selectedModeStatus: "Selected mode: {count} rows.",
+    interestColumn: "Interest",
+    grantCallTypeColumn: "Type of grants call",
+    interestNotEvaluated: "Not evaluated",
+    interestHigh: "High interest",
+    interestMedium: "Medium interest",
+    interestLow: "Low interest",
+    interestNone: "No interest",
+    interestSaveFailed: "Interest level could not be saved. The previous value was restored.",
+    companiesTitle: "Companies",
+    companyNamePlaceholder: "Company name",
+    companyDomainsLabel: "Recommended domains",
+    companyNotesPlaceholder: "Notes (optional)",
+    companyCreate: "Create company",
+    companyUpdate: "Save company",
+    companyCancelEdit: "Cancel edit",
+    companyEnter: "View recommended calls",
+    companyEdit: "Edit",
+    companyDelete: "Delete",
+    companyClear: "Exit company view",
+    companyNoDomains: "Load calls first to select domains.",
+    companyNoCompanies: "No companies saved yet.",
+    companyActive: "Showing calls recommended for {name}",
+    companyRecommendedCount: "{count} matching calls",
+    companySaveFailed: "Company could not be saved.",
+    companyLoadFailed: "Companies could not be loaded.",
+    companyDeleteFailed: "Company could not be deleted.",
+    companyRequiresDomain: "Select at least one domain for the company.",
+  },
+  ro: {
+    title: "Tablou apeluri UE - propuneri",
+    period: "Perioada de finantare 2021-2027",
+    language: "Limba",
+    searchPlaceholder: "Cauta dupa titlu, cod, program...",
+    refresh: "Actualizeaza datele live",
+    refreshSnapshotStarted: "Datele live au fost actualizate.",
+    refreshSnapshotSkipped: "Actualizarea a fost ceruta recent, asa ca nu a fost pornita din nou.",
+    refreshCooldown: "Actualizare disponibila in {seconds}s",
+    refreshSnapshotNotConfigured: "Endpoint-ul live nu este configurat inca.",
+    refreshSnapshotFailed: "Datele live nu au putut fi actualizate.",
+    exportCsv: "Export CSV",
+    exportXlsx: "Export Excel",
+    statusLoading: "Se incarca datele...",
+    statusLoaded: "Se afiseaza {count} apeluri raportate de UE ca Open/Forthcoming.",
+    statusEmpty: "Nu exista apeluri pentru filtrele curente.",
+    statusError: "Datele nu au putut fi incarcate.",
+    updatedAt: "Ultima actualizare: {date}",
+    source: "Sursa: {source}",
+    openLink: "Deschide",
+    navCalls: "Apeluri",
+    navCompanies: "Companii",
+    pageText: "Pagina {page}/{total}",
+    pageRowsText: "Se afiseaza {count} randuri pe aceasta pagina.",
+    prev: "Anterior",
+    next: "Urmator",
+    readMore: "Citeste mai mult",
+    filterPlaceholder: "Filtreaza...",
+    filterAny: "Oricare",
+    filterSelectedCount: "{count} selectate",
+    filterSelectAll: "Selecteaza tot",
+    filterReset: "Reseteaza",
+    filterApply: "Aplica selectia",
+    filterNoOptions: "Fara optiuni",
+    filterNoNumeric: "Nu exista date numerice",
+    filterIncludeNA: "Include N/A",
+    rangeMin: "Min",
+    rangeMax: "Max",
+    filtersShow: "Arata filtrele",
+    filtersHide: "Ascunde filtrele",
+    filtersTitle: "Filtre pe coloane",
+    clearFilters: "Reseteaza filtrele",
+    activeFilters: "{count} active",
+    modalTitle: "Detalii apel",
+    modalClose: "Inchide",
+    modalTopicCode: "Cod topic",
+    modalTopicTitle: "Titlu topic",
+    modalDeadline: "Termen limita",
+    modalCallLink: "Link apel",
+    modalDescription: "Descriere topic",
+    budgetWarningLabel: "Buget estimat",
+    budgetWarningDefault: "Bugetul 2026 nu este publicat inca. Se afiseaza suma din {year}.",
+    themeSwitchToDark: "Comuta la mod intunecat",
+    themeSwitchToLight: "Comuta la mod luminos",
+    showSelected: "Arata selectate ({count})",
+    showAllRows: "Arata tot",
+    clearSelected: "Goleste selectia",
+    selectedModeStatus: "Mod selectie: {count} randuri.",
+    interestColumn: "Interes",
+    grantCallTypeColumn: "Tip apel grant",
+    interestNotEvaluated: "Neevaluat",
+    interestHigh: "Interes mare",
+    interestMedium: "Interes mediu",
+    interestLow: "Interes scazut",
+    interestNone: "Fara interes",
+    interestSaveFailed: "Nivelul de interes nu a putut fi salvat. Valoarea anterioara a fost restaurata.",
+    companiesTitle: "Companii",
+    companyNamePlaceholder: "Nume companie",
+    companyDomainsLabel: "Domenii recomandate",
+    companyNotesPlaceholder: "Note (optional)",
+    companyCreate: "Creeaza companie",
+    companyUpdate: "Salveaza compania",
+    companyCancelEdit: "Anuleaza editarea",
+    companyEnter: "Vezi apeluri recomandate",
+    companyEdit: "Editeaza",
+    companyDelete: "Sterge",
+    companyClear: "Iesi din vizualizarea companiei",
+    companyNoDomains: "Incarca apelurile mai intai pentru a selecta domenii.",
+    companyNoCompanies: "Nu exista companii salvate inca.",
+    companyActive: "Se afiseaza apelurile recomandate pentru {name}",
+    companyRecommendedCount: "{count} apeluri potrivite",
+    companySaveFailed: "Compania nu a putut fi salvata.",
+    companyLoadFailed: "Companiile nu au putut fi incarcate.",
+    companyDeleteFailed: "Compania nu a putut fi stearsa.",
+    companyRequiresDomain: "Selecteaza cel putin un domeniu pentru companie.",
+  },
+};
+
+const state = {
+  lang: "en",
+  rows: [],
+  allRows: [],
+  filteredRows: [],
+  generatedAt: "",
+  source: "",
+  totalRows: 0,
+  totalPages: 1,
+  pageSize: PAGE_SIZE,
+  page: 1,
+  theme: "light",
+  showSelectedOnly: false,
+  selectedIds: new Set(),
+  selectedRows: new Map(),
+  interestByKey: new Map(),
+  interestSavingKeys: new Set(),
+  companies: [],
+  activeCompanyId: null,
+  editingCompanyId: null,
+  companyFormDomains: [],
+  companyDomainsPickerOpen: false,
+  companiesLoaded: false,
+  currentView: "calls",
+  activeDescriptionRow: null,
+  remoteQuery: "",
+  filtersOpen: false,
+  openMultiselectColumn: null,
+  columnFilters: Object.create(null),
+  appliedColumnFilters: Object.create(null),
+  filterMetadata: Object.create(null),
+  filtersDirty: false,
+  liveReconcileInFlight: false,
+  lastPayloadSource: "",
+};
+
+const refs = {
+  title: document.getElementById("title"),
+  labelPeriod: document.getElementById("labelPeriod"),
+  labelLanguage: document.getElementById("labelLanguage"),
+  langSelect: document.getElementById("langSelect"),
+  navCallsBtn: document.getElementById("navCallsBtn"),
+  navCompaniesBtn: document.getElementById("navCompaniesBtn"),
+  companiesView: document.getElementById("companiesView"),
+  searchInput: document.getElementById("searchInput"),
+  refreshBtn: document.getElementById("refreshBtn"),
+  selectedOnlyBtn: document.getElementById("selectedOnlyBtn"),
+  clearSelectedBtn: document.getElementById("clearSelectedBtn"),
+  exportCsvBtn: document.getElementById("exportCsvBtn"),
+  exportXlsxBtn: document.getElementById("exportXlsxBtn"),
+  filtersToggleBtn: document.getElementById("filtersToggleBtn"),
+  filtersPanel: document.getElementById("filtersPanel"),
+  filtersGrid: document.getElementById("filtersGrid"),
+  applyFiltersBtn: document.getElementById("applyFiltersBtn"),
+  clearFiltersBtn: document.getElementById("clearFiltersBtn"),
+  themeToggleBtn: document.getElementById("themeToggleBtn"),
+  tableWrap: document.querySelector(".table-wrap"),
+  tableHeadRow: document.getElementById("tableHeadRow"),
+  tableBody: document.getElementById("tableBody"),
+  cardList: document.getElementById("cardList"),
+  statusText: document.getElementById("statusText"),
+  updatedAt: document.getElementById("updatedAt"),
+  prevPageBtn: document.getElementById("prevPageBtn"),
+  nextPageBtn: document.getElementById("nextPageBtn"),
+  pageInfo: document.getElementById("pageInfo"),
+  prevPageBtnBottom: document.getElementById("prevPageBtnBottom"),
+  nextPageBtnBottom: document.getElementById("nextPageBtnBottom"),
+  pageInfoBottom: document.getElementById("pageInfoBottom"),
+  companiesTitle: document.getElementById("companiesTitle"),
+  companyNameInput: document.getElementById("companyNameInput"),
+  companyDomainsPicker: document.getElementById("companyDomainsPicker"),
+  companyNotesInput: document.getElementById("companyNotesInput"),
+  saveCompanyBtn: document.getElementById("saveCompanyBtn"),
+  resetCompanyFormBtn: document.getElementById("resetCompanyFormBtn"),
+  companyList: document.getElementById("companyList"),
+  activeCompanyBanner: document.getElementById("activeCompanyBanner"),
+  activeCompanyName: document.getElementById("activeCompanyName"),
+  activeCompanyDomains: document.getElementById("activeCompanyDomains"),
+  activeCompanyCount: document.getElementById("activeCompanyCount"),
+  clearCompanyBtn: document.getElementById("clearCompanyBtn"),
+  descModal: document.getElementById("descModal"),
+  modalHeading: document.getElementById("modalHeading"),
+  modalCloseBtn: document.getElementById("modalCloseBtn"),
+  modalTopicCodeLabel: document.getElementById("modalTopicCodeLabel"),
+  modalTopicCodeValue: document.getElementById("modalTopicCodeValue"),
+  modalTopicTitleLabel: document.getElementById("modalTopicTitleLabel"),
+  modalTopicTitleValue: document.getElementById("modalTopicTitleValue"),
+  modalDeadlineLabel: document.getElementById("modalDeadlineLabel"),
+  modalDeadlineValue: document.getElementById("modalDeadlineValue"),
+  modalCallLinkLabel: document.getElementById("modalCallLinkLabel"),
+  modalLinkValue: document.getElementById("modalLinkValue"),
+  modalDescriptionLabel: document.getElementById("modalDescriptionLabel"),
+  modalDescriptionValue: document.getElementById("modalDescriptionValue"),
+};
+
+function t(key, vars = {}) {
+  const str = I18N[state.lang][key] || key;
+  return str.replace(/\{(\w+)\}/g, (_, token) => String(vars[token] ?? ""));
+}
+
+function setCurrentView(view) {
+  state.currentView = view === "companies" ? "companies" : "calls";
+
+  if (refs.companiesView) refs.companiesView.hidden = state.currentView !== "companies";
+  if (refs.navCallsBtn) {
+    refs.navCallsBtn.classList.toggle("is-active", state.currentView === "calls");
+    refs.navCallsBtn.setAttribute("aria-current", state.currentView === "calls" ? "page" : "false");
+  }
+  if (refs.navCompaniesBtn) {
+    refs.navCompaniesBtn.classList.toggle("is-active", state.currentView === "companies");
+    refs.navCompaniesBtn.setAttribute("aria-current", state.currentView === "companies" ? "page" : "false");
+  }
+
+  if (state.currentView === "calls" && state.activeCompanyId) {
+    state.activeCompanyId = null;
+    state.page = 1;
+    state.filterMetadata = Object.create(null);
+    renderCompanies();
+    if (state.filtersOpen) renderFiltersPanel();
+    renderRows();
+  } else {
+    renderCompanies();
+  }
+}
+
+function getColumnLabel(column) {
+  if (column === INTEREST_COLUMN) return t("interestColumn");
+  if (column === GRANT_CALL_TYPE_COLUMN) return t("grantCallTypeColumn");
+  return column;
+}
+
+function sanitize(value) {
+  if (value === null || value === undefined || value === "") return "N/A";
+  return String(value);
+}
+
+function normalizeFilterValue(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+const DEFAULT_AVAILABLE_STATUS_KEYS = ["open", "forthcoming", "closed"];
+const MULTISELECT_COLUMNS = new Set([INTEREST_COLUMN, STATUS_COLUMN, "Stages", "Programme", "Programme code", "Type of Action", GRANT_CALL_TYPE_COLUMN, "Domains", "Subdomains"]);
+
+function canonicalizeSelectValue(value) {
+  return normalizeFilterValue(value)
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[’']/g, "'")
+    .trim();
+}
+
+function normalizeSelectValues(values) {
+  const rawValues = Array.isArray(values)
+    ? values
+    : typeof values === "string" && values.trim()
+      ? [values]
+      : [];
+
+  return Array.from(new Set(rawValues.map(canonicalizeSelectValue).filter(Boolean)));
+}
+
+function getDefaultSelectValues(column) {
+  if (column === INTEREST_COLUMN) return [];
+  return column === STATUS_COLUMN ? [...DEFAULT_AVAILABLE_STATUS_KEYS] : [];
+}
+
+function getSelectFilterValues(filter, column = "") {
+  if (!filter || filter.kind !== "select") return [];
+  const values = normalizeSelectValues(filter.values ?? filter.value);
+  return values.length ? values : getDefaultSelectValues(column);
+}
+
+function arraysEqualAsSets(left, right) {
+  const a = normalizeSelectValues(left);
+  const b = normalizeSelectValues(right);
+  if (a.length !== b.length) return false;
+  const bSet = new Set(b);
+  return a.every((entry) => bSet.has(entry));
+}
+
+function isDefaultSelectFilter(column, filter) {
+  return arraysEqualAsSets(getSelectFilterValues(filter, column), getDefaultSelectValues(column));
+}
+
+function splitSelectValue(value) {
+  const raw = sanitize(value);
+  if (raw === "N/A") return [];
+
+  const parts = String(raw)
+    .split(/\s*(?:;|\||•|\r?\n)\s*/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  return parts.length ? parts : [raw];
+}
+
+function getSelectTokensForValue(value) {
+  const raw = sanitize(value);
+  const tokens = new Set();
+  const fullKey = canonicalizeSelectValue(raw);
+  if (fullKey) tokens.add(fullKey);
+  for (const part of splitSelectValue(raw)) {
+    const partKey = canonicalizeSelectValue(part);
+    if (partKey) tokens.add(partKey);
+  }
+  return tokens;
+}
+
+function isAvailableStatusLabel(value) {
+  return DEFAULT_AVAILABLE_STATUS_KEYS.includes(canonicalizeSelectValue(value));
+}
+
+function createDefaultFilterState(column) {
+  switch (column) {
+    case INTEREST_COLUMN:
+      return { kind: "select", values: getDefaultSelectValues(column), includeNA: false };
+    case STATUS_COLUMN:
+    case "Stages":
+    case "Programme":
+    case "Programme code":
+    case "Type of Action":
+    case GRANT_CALL_TYPE_COLUMN:
+    case "Domains":
+    case "Subdomains":
+      return { kind: "select", values: getDefaultSelectValues(column), includeNA: false };
+    case "Topic code":
+      return { kind: "text", value: "" };
+    case TOPIC_TITLE_COLUMN:
+    case DESCRIPTION_COLUMN:
+      return { kind: "text", value: "" };
+    case "Opening date":
+    case "Deadline":
+      return { kind: "date", value: "", includeNA: false };
+    case BUDGET_COLUMN:
+      return { kind: "range", min: null, max: null, includeNA: false };
+    case "CAll link":
+      return { kind: "none" };
+    default:
+      return { kind: "text", value: "" };
+  }
+}
+
+function cloneFilterState(filter) {
+  if (!filter || typeof filter !== "object") return filter;
+  return {
+    ...filter,
+    values: Array.isArray(filter.values) ? [...filter.values] : filter.values,
+  };
+}
+
+function cloneColumnFilters(filters) {
+  return Object.fromEntries(COLUMN_ORDER.map((col) => [col, cloneFilterState(filters[col] || createDefaultFilterState(col))]));
+}
+
+function ensureColumnFilters() {
+  for (const col of COLUMN_ORDER) {
+    const current = state.columnFilters[col];
+    if (!current || typeof current !== "object") {
+      state.columnFilters[col] = createDefaultFilterState(col);
+      continue;
+    }
+
+    if (current.kind === "select") {
+      current.values = getSelectFilterValues(current, col);
+      delete current.value;
+      if (typeof current.includeNA !== "boolean") current.includeNA = false;
+    }
+  }
+
+  if (!state.appliedColumnFilters || Object.keys(state.appliedColumnFilters).length === 0) {
+    state.appliedColumnFilters = cloneColumnFilters(state.columnFilters);
+  }
+}
+
+function buildPublicTopicUrl(topicCode) {
+  const code = String(topicCode || "").trim();
+  if (!code) return "";
+  return `${PUBLIC_CALL_BASE_URL}${encodeURIComponent(code)}`;
+}
+
+function normalizeCallLink(topicCode, candidateUrl) {
+  const fallback = buildPublicTopicUrl(topicCode);
+  const raw = String(candidateUrl || "").trim();
+  if (!raw) return fallback || "N/A";
+
+  const dataTopicMatch = raw.match(/\/opportunities\/data\/topicDetails\/([^/?#]+)/i);
+  if (dataTopicMatch) {
+    const slug = decodeURIComponent(dataTopicMatch[1]).replace(/\.json$/i, "");
+    return buildPublicTopicUrl(topicCode || slug) || "N/A";
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    return raw.replace(/\.json(?=($|[?#]))/i, "");
+  }
+
+  return fallback || "N/A";
+}
+
+function makeStableHash(value) {
+  const text = String(value || "");
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function extractTopicSlugFromUrl(url) {
+  const raw = String(url || "").trim();
+  const match = raw.match(/topic-details\/([^/?#]+)/i) || raw.match(/topicDetails\/([^/?#]+)/i);
+  return match ? decodeURIComponent(match[1]).replace(/\.json$/i, "") : "";
+}
+
+function buildRowKey(row) {
+  const topicCode = sanitize(row["Topic code"]);
+  if (topicCode !== "N/A") return `topic:${topicCode}`;
+
+  const urlSlug = sanitize(extractTopicSlugFromUrl(row["CAll link"]));
+  if (urlSlug !== "N/A") return `topic:${urlSlug}`;
+
+  const sourceReference = sanitize(row._sourceReference);
+  if (sourceReference !== "N/A") return `ref:${sourceReference}`;
+
+  const stableParts = [
+    sanitize(row[TOPIC_TITLE_COLUMN]),
+    sanitize(row["Deadline"]),
+    sanitize(row["Programme code"]),
+    sanitize(row[GRANT_CALL_TYPE_COLUMN]),
+  ].join("::");
+  return `hash:${makeStableHash(stableParts)}`;
+}
+
+function normalizeClientRow(row) {
+  const normalized = row && typeof row === "object" ? { ...row } : {};
+  normalized[DESCRIPTION_COLUMN] = sanitize(normalized[DESCRIPTION_COLUMN]);
+  normalized["CAll link"] = normalizeCallLink(normalized["Topic code"], normalized["CAll link"]);
+  normalized["Programme code"] = sanitize(normalized["Programme code"] || normalized._programmeCode);
+  normalized[GRANT_CALL_TYPE_COLUMN] = sanitize(normalized[GRANT_CALL_TYPE_COLUMN] || normalized._grantCallType);
+  normalized.Domains = sanitize(normalized.Domains);
+  normalized.Subdomains = sanitize(normalized.Subdomains);
+  if (!String(normalized[FULL_DESCRIPTION_FIELD] || "").trim()) {
+    normalized[FULL_DESCRIPTION_FIELD] = normalized[DESCRIPTION_COLUMN];
+  }
+  normalized._statusLabel = String(normalized._statusLabel || "").toLowerCase();
+  if (!String(normalized[STATUS_COLUMN] || "").trim()) {
+    normalized[STATUS_COLUMN] = normalized._statusLabel === "forthcoming"
+      ? "Forthcoming"
+      : normalized._statusLabel === "open"
+        ? "Open"
+        : "N/A";
+  }
+  normalized._budgetEstimated = normalized._budgetEstimated === true || String(normalized._budgetEstimated).toLowerCase() === "true";
+  normalized._budgetSourceYear = String(normalized._budgetSourceYear || "").trim();
+  normalized._budgetFallbackWarning = String(normalized._budgetFallbackWarning || "").trim();
+  normalized._rowKey = buildRowKey(normalized);
+  const storedInterest = normalizeInterestLevel(state.interestByKey.get(normalized._rowKey) || normalized._interestLevel || normalized[INTEREST_COLUMN]);
+  applyInterestToRow(normalized, storedInterest);
+  return normalized;
+}
+
+function isRowSelected(row) {
+  return state.selectedIds.has(row._rowKey);
+}
+
+function setRowSelected(row, selected) {
+  const rowKey = row._rowKey;
+  if (!rowKey) return;
+
+  if (selected) {
+    state.selectedIds.add(rowKey);
+    state.selectedRows.set(rowKey, row);
+    return;
+  }
+
+  state.selectedIds.delete(rowKey);
+  state.selectedRows.delete(rowKey);
+}
+
+function getSelectedRows() {
+  return Array.from(state.selectedRows.values());
+}
+
+function toggleSelectedOnly() {
+  state.showSelectedOnly = !state.showSelectedOnly;
+  renderRows();
+}
+
+function clearSelectedRows() {
+  state.selectedIds.clear();
+  state.selectedRows.clear();
+  state.showSelectedOnly = false;
+  renderRows();
+}
+
+function updateSelectionControls() {
+  const selectedCount = state.selectedRows.size;
+  if (refs.selectedOnlyBtn) {
+    refs.selectedOnlyBtn.textContent = state.showSelectedOnly
+      ? t("showAllRows")
+      : t("showSelected", { count: selectedCount });
+    refs.selectedOnlyBtn.disabled = selectedCount === 0;
+  }
+  if (refs.clearSelectedBtn) {
+    refs.clearSelectedBtn.textContent = t("clearSelected");
+    refs.clearSelectedBtn.disabled = selectedCount === 0;
+  }
+}
+
+function safeParseJSON(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function storageGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function storageRemove(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function readCookie(name) {
+  const parts = String(document.cookie || "").split(";");
+  for (const part of parts) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === name) return decodeURIComponent(rest.join("="));
+  }
+  return "";
+}
+
+function saveThemePreference(theme) {
+  try {
+    storageSet(THEME_KEY, theme);
+  } catch {
+  }
+  document.cookie = `eu_dashboard_theme=${encodeURIComponent(theme)}; Max-Age=31536000; Path=/; SameSite=Lax`;
+}
+
+function resolveSavedTheme() {
+  const local = storageGet(THEME_KEY);
+  if (local === "dark" || local === "light") return local;
+
+  const cookieTheme = readCookie("eu_dashboard_theme");
+  if (cookieTheme === "dark" || cookieTheme === "light") return cookieTheme;
+
+  return "light";
+}
+
+function applyTheme(theme) {
+  state.theme = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", state.theme);
+
+  if (refs.themeToggleBtn) {
+    refs.themeToggleBtn.setAttribute("aria-pressed", state.theme === "dark" ? "true" : "false");
+    const label = state.theme === "dark" ? t("themeSwitchToLight") : t("themeSwitchToDark");
+    refs.themeToggleBtn.setAttribute("aria-label", label);
+    refs.themeToggleBtn.setAttribute("title", label);
+  }
+}
+
+function markFiltersDirty() {
+  state.filtersDirty = true;
+  state.page = 1;
+  updateFiltersPanelVisibility();
+}
+
+function applyDraftFilters() {
+  state.appliedColumnFilters = cloneColumnFilters(state.columnFilters);
+  state.filtersDirty = false;
+  state.filtersOpen = false;
+  state.openMultiselectColumn = null;
+  state.page = 1;
+  renderFiltersPanel();
+  renderRows();
+  updateFiltersPanelVisibility();
+}
+
+function toggleTheme() {
+  const nextTheme = state.theme === "dark" ? "light" : "dark";
+  applyTheme(nextTheme);
+  saveThemePreference(nextTheme);
+}
+
+function saveLocalCache() {
+  if (!Array.isArray(state.allRows) || state.allRows.length === 0) return false;
+
+  const payload = {
+    generatedAt: state.generatedAt || new Date().toISOString(),
+    source: state.source || "local-cache",
+    page: state.page,
+    pageSize: state.pageSize,
+    total: state.allRows.length,
+    totalPages: Math.max(1, Math.ceil(state.allRows.length / (state.pageSize || PAGE_SIZE))),
+    items: state.allRows,
+    savedAt: Date.now(),
+  };
+
+  return storageSet(CACHE_KEY, JSON.stringify(payload));
+}
+
+function loadLocalCache() {
+  const raw = storageGet(CACHE_KEY);
+  if (!raw) return null;
+
+  const parsed = safeParseJSON(raw);
+  if (!parsed || !Array.isArray(parsed.items)) return null;
+
+  const savedAt = Number(parsed.savedAt || 0);
+  if (!Number.isFinite(savedAt) || savedAt <= 0 || (Date.now() - savedAt) > CACHE_MAX_AGE_MS) {
+    storageRemove(CACHE_KEY);
+    return null;
+  }
+
+  return parsed;
+}
+
+function readLiveReconcileCache() {
+  const parsed = safeParseJSON(storageGet(LIVE_RECONCILE_CACHE_KEY));
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+function writeLiveReconcileCache(cache) {
+  storageSet(LIVE_RECONCILE_CACHE_KEY, JSON.stringify(cache || {}));
+}
+
+function getTopicCode(row) {
+  return String(row && row["Topic code"] ? row["Topic code"] : "").trim();
+}
+
+function getCurrentVisiblePageRows() {
+  const rows = state.filteredRows && state.filteredRows.length ? state.filteredRows : getFilteredRows();
+  const start = state.showSelectedOnly ? 0 : (state.page - 1) * state.pageSize;
+  const end = state.showSelectedOnly ? rows.length : start + state.pageSize;
+  return rows.slice(start, end);
+}
+
+function shouldSkipLiveReconcile(codes) {
+  if (!codes.length) return true;
+  const cache = readLiveReconcileCache();
+  const now = Date.now();
+  const cacheKey = codes.slice().sort((a, b) => a.localeCompare(b)).join("|").toLowerCase();
+  const lastChecked = Number(cache[cacheKey] || 0);
+  if (Number.isFinite(lastChecked) && now - lastChecked < LIVE_RECONCILE_COOLDOWN_MS) {
+    return true;
+  }
+  cache[cacheKey] = now;
+  writeLiveReconcileCache(cache);
+  return false;
+}
+
+function mergeVerifiedRows() {
+  return false;
+}
+
+
+function removeMissingRows() {
+  return false;
+}
+
+
+function markReconciledSource(source) {
+  const text = String(source || "").toLowerCase();
+  return text.includes("live") || text.includes("/api/calls");
+}
+
+async function reconcileCurrentPageWithLive(options = {}) {
+  return;
+}
+
+function updateMetaText() {
+  refs.updatedAt.textContent = state.generatedAt
+    ? t("updatedAt", { date: new Date(state.generatedAt).toLocaleString() })
+    : "";
+
+  if (state.source) {
+    const sourceText = t("source", { source: state.source });
+    refs.updatedAt.textContent = refs.updatedAt.textContent ? `${refs.updatedAt.textContent} | ${sourceText}` : sourceText;
+  }
+}
+
+function captureScrollSnapshot() {
+  const modalBody = refs.descModal ? refs.descModal.querySelector(".modal-body") : null;
+  return {
+    windowX: window.scrollX,
+    windowY: window.scrollY,
+    tableScrollLeft: refs.tableWrap ? refs.tableWrap.scrollLeft : 0,
+    tableScrollTop: refs.tableWrap ? refs.tableWrap.scrollTop : 0,
+    modalScrollTop: modalBody ? modalBody.scrollTop : 0,
+  };
+}
+
+function restoreScrollSnapshot(snapshot) {
+  if (!snapshot) return;
+
+  requestAnimationFrame(() => {
+    if (refs.tableWrap) {
+      refs.tableWrap.scrollLeft = snapshot.tableScrollLeft;
+      refs.tableWrap.scrollTop = snapshot.tableScrollTop;
+    }
+
+    const modalBody = refs.descModal ? refs.descModal.querySelector(".modal-body") : null;
+    if (modalBody && isModalOpen()) {
+      modalBody.scrollTop = snapshot.modalScrollTop;
+    }
+
+    window.scrollTo(snapshot.windowX, snapshot.windowY);
+  });
+}
+
+function applyPayload(payload, responseSource = "", requestedPage = 1) {
+  const normalizedRows = Array.isArray(payload.items) ? payload.items.map(normalizeClientRow) : [];
+  state.allRows = normalizedRows.filter((row) => isAvailableStatusLabel(row[STATUS_COLUMN] || row._statusLabel));
+  state.rows = state.allRows;
+  state.filterMetadata = Object.create(null);
+  for (const row of state.rows) {
+    if (state.selectedIds.has(row._rowKey)) {
+      state.selectedRows.set(row._rowKey, row);
+    }
+  }
+  state.generatedAt = payload.generatedAt || "";
+  state.source = payload.source || responseSource || "";
+  state.lastPayloadSource = responseSource || payload.source || "";
+
+  state.pageSize = PAGE_SIZE;
+
+  state.totalRows = state.rows.length;
+  state.remoteQuery = "";
+  state.totalPages = Math.max(1, Math.ceil(Math.max(state.totalRows, 1) / state.pageSize));
+
+  const safePage = Number.isFinite(Number(requestedPage)) ? Number(requestedPage) : 1;
+  state.page = Math.min(Math.max(safePage, 1), state.totalPages);
+
+  saveLocalCache();
+  updateMetaText();
+  applyInterestMapToRows();
+  renderFiltersPanel();
+  renderCompanies();
+  renderRows();
+  loadInterestLevels();
+}
+
+function normalizeInterestLevel(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "_");
+  return INTEREST_LEVELS.includes(normalized) ? normalized : INTEREST_DEFAULT;
+}
+
+function getInterestLabel(level) {
+  const safeLevel = normalizeInterestLevel(level);
+  switch (safeLevel) {
+    case "high": return t("interestHigh");
+    case "medium": return t("interestMedium");
+    case "low": return t("interestLow");
+    case "none": return t("interestNone");
+    default: return t("interestNotEvaluated");
+  }
+}
+
+function getInterestShortLabel(level) {
+  return getInterestLabel(level);
+}
+
+function getRowInterestLevel(row) {
+  return normalizeInterestLevel(row?._interestLevel || (row && row[INTEREST_COLUMN]));
+}
+
+function applyInterestToRow(row, level) {
+  const safeLevel = normalizeInterestLevel(level);
+  row._interestLevel = safeLevel;
+  row[INTEREST_COLUMN] = INTEREST_META[safeLevel].label;
+  return row;
+}
+
+function getColumnDisplayValue(row, col) {
+  if (col === DESCRIPTION_COLUMN) return getFullDescription(row);
+  if (col === INTEREST_COLUMN) return getInterestLabel(getRowInterestLevel(row));
+  return sanitize(row[col]);
+}
+
+function applyInterestMapToRows() {
+  const rows = [...state.allRows, ...state.rows, ...state.selectedRows.values()];
+  const seen = new Set();
+  for (const row of rows) {
+    if (!row || seen.has(row._rowKey)) continue;
+    seen.add(row._rowKey);
+    applyInterestToRow(row, state.interestByKey.get(row._rowKey) || row._interestLevel || INTEREST_DEFAULT);
+  }
+  state.filterMetadata = Object.create(null);
+}
+
+function loadInterestCache() {
+  try {
+    const parsed = JSON.parse(storageGet(INTEREST_LOCAL_CACHE_KEY) || "{}");
+    if (!parsed || typeof parsed !== "object") return;
+    for (const [rowKey, level] of Object.entries(parsed)) {
+      state.interestByKey.set(rowKey, normalizeInterestLevel(level));
+    }
+  } catch {}
+}
+
+function saveInterestCache() {
+  const out = {};
+  for (const [rowKey, level] of state.interestByKey.entries()) {
+    const safeLevel = normalizeInterestLevel(level);
+    if (safeLevel !== INTEREST_DEFAULT) out[rowKey] = safeLevel;
+  }
+  storageSet(INTEREST_LOCAL_CACHE_KEY, JSON.stringify(out));
+}
+
+async function loadInterestLevels() {
+  try {
+    const res = await fetchWithTimeout(INTEREST_ENDPOINT, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) return;
+    const data = await readJsonIfPossible(res);
+    if (!data || !Array.isArray(data.items)) return;
+    state.interestByKey.clear();
+    for (const item of data.items) {
+      const rowKey = String(item.rowKey || "").trim();
+      const topicCode = String(item.topicCode || "").trim();
+      const stableTopicKey = topicCode ? `topic:${topicCode}` : "";
+      const level = normalizeInterestLevel(item.interestLevel);
+      if (rowKey) state.interestByKey.set(rowKey, level);
+      if (stableTopicKey) state.interestByKey.set(stableTopicKey, level);
+    }
+    saveInterestCache();
+    applyInterestMapToRows();
+    renderFiltersPanel();
+    renderRows();
+  } catch {}
+}
+
+async function saveInterestLevel(row, level) {
+  const rowKey = row?._rowKey;
+  if (!rowKey) return;
+  const safeLevel = normalizeInterestLevel(level);
+  const previousLevel = getRowInterestLevel(row);
+
+  state.interestByKey.set(rowKey, safeLevel);
+  state.interestSavingKeys.add(rowKey);
+  applyInterestToRow(row, safeLevel);
+  saveInterestCache();
+  applyInterestMapToRows();
+  renderFiltersPanel();
+  renderRows();
+  try {
+    const res = await fetchWithTimeout(INTEREST_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        callKey: rowKey,
+        rowKey,
+        topicCode: sanitize(row["Topic code"]),
+        interestLevel: safeLevel,
+      }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch {
+    state.interestByKey.set(rowKey, previousLevel);
+    applyInterestToRow(row, previousLevel);
+    saveInterestCache();
+    applyInterestMapToRows();
+    refs.statusText.textContent = t("interestSaveFailed");
+    renderFiltersPanel();
+    renderRows();
+  } finally {
+    state.interestSavingKeys.delete(rowKey);
+    renderRows();
+  }
+}
+
+function closeOtherInterestDropdowns(currentDetails) {
+  document.querySelectorAll("details.interest-picker[open]").forEach((details) => {
+    if (details !== currentDetails) details.open = false;
+  });
+}
+
+function createInterestSelect(row) {
+  const currentLevel = getRowInterestLevel(row);
+  const wrapper = document.createElement("div");
+  wrapper.className = "interest-cell";
+
+  const details = document.createElement("details");
+  details.className = "interest-picker";
+  if (state.interestSavingKeys.has(row._rowKey)) {
+    details.classList.add("is-saving");
+  }
+  details.addEventListener("toggle", () => {
+    if (details.open) closeOtherInterestDropdowns(details);
+  });
+
+  const summary = document.createElement("summary");
+  summary.className = "interest-trigger";
+  summary.setAttribute("aria-label", `${t("interestColumn")}: ${sanitize(row["Topic code"])}`);
+
+  const dot = document.createElement("span");
+  dot.className = `interest-dot ${INTEREST_META[currentLevel].className}`;
+  dot.setAttribute("aria-hidden", "true");
+
+  const label = document.createElement("span");
+  label.className = "interest-trigger-label";
+  label.textContent = getInterestShortLabel(currentLevel);
+  summary.append(dot, label);
+  details.appendChild(summary);
+
+  const panel = document.createElement("div");
+  panel.className = "interest-menu";
+  for (const level of INTEREST_LEVELS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "interest-option";
+    if (level === currentLevel) button.classList.add("is-selected");
+    button.disabled = state.interestSavingKeys.has(row._rowKey);
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      details.open = false;
+      if (level !== currentLevel) saveInterestLevel(row, level);
+    });
+
+    const optionDot = document.createElement("span");
+    optionDot.className = `interest-dot ${INTEREST_META[level].className}`;
+    optionDot.setAttribute("aria-hidden", "true");
+    const optionText = document.createElement("span");
+    optionText.textContent = getInterestLabel(level);
+    button.append(optionDot, optionText);
+    panel.appendChild(button);
+  }
+
+  details.appendChild(panel);
+  wrapper.appendChild(details);
+  return wrapper;
+}
+
+function createCardInterest(row) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "card-interest";
+  const label = document.createElement("strong");
+  label.textContent = `${t("interestColumn")}: `;
+  wrapper.appendChild(label);
+  wrapper.appendChild(createInterestSelect(row));
+  return wrapper;
+}
+
+function getFullDescription(row) {
+  return sanitize(row[FULL_DESCRIPTION_FIELD] || row[DESCRIPTION_COLUMN]);
+}
+
+function getDescriptionPreview(row) {
+  const full = getFullDescription(row);
+  if (full === "N/A" || full.length <= DESCRIPTION_PREVIEW_LENGTH) return full;
+  return `${full.slice(0, DESCRIPTION_PREVIEW_LENGTH - 3).trimEnd()}...`;
+}
+
+function getTitlePreview(row) {
+  const full = sanitize(row[TOPIC_TITLE_COLUMN]);
+  if (full === "N/A" || full.length <= TITLE_PREVIEW_LENGTH) return full;
+  return `${full.slice(0, TITLE_PREVIEW_LENGTH - 3).trimEnd()}...`;
+}
+
+function hasExpandedDescription(row) {
+  const full = getFullDescription(row);
+  return full !== "N/A" && full.length > DESCRIPTION_PREVIEW_LENGTH;
+}
+
+function hasExpandedTitle(row) {
+  const full = sanitize(row[TOPIC_TITLE_COLUMN]);
+  return full !== "N/A" && full.length > TITLE_PREVIEW_LENGTH;
+}
+
+function isForthcomingRow(row) {
+  return String(row._statusLabel || "").toLowerCase() === "forthcoming";
+}
+
+function hasBudgetWarning(row) {
+  return isForthcomingRow(row) && row._budgetEstimated && sanitize(row[BUDGET_COLUMN]) !== "N/A";
+}
+
+function getBudgetWarningText(row) {
+  if (row._budgetFallbackWarning) return row._budgetFallbackWarning;
+  const year = row._budgetSourceYear || "previous year";
+  return t("budgetWarningDefault", { year });
+}
+
+function createRowSelectionCheckbox(row) {
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.className = "row-select";
+  input.checked = isRowSelected(row);
+  input.setAttribute("aria-label", `Select ${sanitize(row["Topic code"])}`);
+  input.addEventListener("change", () => {
+    setRowSelected(row, input.checked);
+    updateSelectionControls();
+    renderRows();
+  });
+  return input;
+}
+
+function createCardSelection(row) {
+  const wrapper = document.createElement("label");
+  wrapper.className = "card-select-wrap";
+
+  const input = createRowSelectionCheckbox(row);
+  wrapper.appendChild(input);
+
+  const text = document.createElement("span");
+  text.textContent = sanitize(row["Topic code"]);
+  wrapper.appendChild(text);
+
+  return wrapper;
+}
+
+function createBudgetCell(row) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "budget-cell";
+
+  const line = document.createElement("div");
+  line.className = "budget-line";
+
+  const value = document.createElement("span");
+  value.className = "budget-value";
+  value.textContent = sanitize(row[BUDGET_COLUMN]);
+  line.appendChild(value);
+
+  if (hasBudgetWarning(row)) {
+    const warning = document.createElement("span");
+    warning.className = "budget-warning-badge";
+    warning.textContent = "!";
+    warning.title = getBudgetWarningText(row);
+    warning.setAttribute("aria-label", t("budgetWarningLabel"));
+    line.appendChild(warning);
+
+    const help = document.createElement("p");
+    help.className = "budget-help";
+    help.textContent = getBudgetWarningText(row);
+    wrapper.appendChild(help);
+  }
+
+  wrapper.prepend(line);
+  return wrapper;
+}
+
+function createDescriptionCell(row) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "desc-cell";
+
+  const preview = document.createElement("p");
+  preview.className = "desc-preview";
+  preview.textContent = getDescriptionPreview(row);
+  wrapper.appendChild(preview);
+
+  if (hasExpandedDescription(row)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "desc-more-btn";
+    button.textContent = t("readMore");
+    button.addEventListener("click", () => openDescriptionModal(row));
+    wrapper.appendChild(button);
+  }
+
+  return wrapper;
+}
+
+function createTopicTitleCell(row) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "title-cell";
+
+  const preview = document.createElement("p");
+  preview.className = "title-preview";
+  preview.textContent = getTitlePreview(row);
+  wrapper.appendChild(preview);
+
+  if (hasExpandedTitle(row)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "desc-more-btn";
+    button.textContent = t("readMore");
+    button.addEventListener("click", () => openDescriptionModal(row));
+    wrapper.appendChild(button);
+  }
+
+  return wrapper;
+}
+
+function parseDateValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "N/A") return null;
+
+  const direct = new Date(raw);
+  if (!Number.isNaN(direct.getTime())) {
+    return direct.toISOString().slice(0, 10);
+  }
+
+  const match = raw.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (!match) return null;
+  const [, day, monthName, year] = match;
+  const months = {
+    january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+    july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+  };
+  const monthIndex = months[monthName.toLowerCase()];
+  if (monthIndex === undefined) return null;
+  const date = new Date(Date.UTC(Number(year), monthIndex, Number(day)));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function parseBudgetValue(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "N/A") return null;
+  const normalized = raw.replace(/[^\d.,-]/g, "").replace(/,/g, "");
+  const num = Number.parseFloat(normalized);
+  return Number.isFinite(num) ? num : null;
+}
+
+function getRowsForFilterOptions(targetCol, filters = state.columnFilters) {
+  const sourceRows = (state.showSelectedOnly ? getSelectedRows() : (state.allRows.length ? state.allRows : state.rows)).filter((row) => rowMatchesCompany(row));
+  const query = normalizeFilterValue(refs.searchInput ? refs.searchInput.value : "");
+
+  return sourceRows.filter((row) => {
+    if (query) {
+      const matchesQuery = COLUMN_ORDER.some((col) => normalizeFilterValue(getColumnDisplayValue(row, col)).includes(query));
+      if (!matchesQuery) return false;
+    }
+
+    return COLUMN_ORDER.every((col) => {
+      if (col === targetCol) return true;
+      return rowMatchesColumnFilter(row, col, filters);
+    });
+  });
+}
+
+function getColumnMetadata(col, rowsOverride = null) {
+  const useCache = !Array.isArray(rowsOverride);
+  if (useCache && state.filterMetadata[col]) return state.filterMetadata[col];
+
+  const rows = Array.isArray(rowsOverride) ? rowsOverride : (state.allRows.length ? state.allRows : state.rows);
+  const values = [];
+  const optionMap = new Map();
+  const numericValues = [];
+  const dateValues = [];
+  let hasNA = false;
+
+  for (const row of rows) {
+    const rawValue = getColumnDisplayValue(row, col);
+    values.push(rawValue);
+    if (rawValue === "N/A") {
+      hasNA = true;
+    } else if (MULTISELECT_COLUMNS.has(col)) {
+      for (const optionValue of splitSelectValue(rawValue)) {
+        const key = canonicalizeSelectValue(optionValue);
+        if (key && !optionMap.has(key)) optionMap.set(key, optionValue);
+      }
+    } else {
+      const key = canonicalizeSelectValue(rawValue);
+      if (key && !optionMap.has(key)) optionMap.set(key, rawValue);
+    }
+
+    if (col === BUDGET_COLUMN) {
+      const numeric = parseBudgetValue(rawValue);
+      if (numeric !== null) numericValues.push(numeric);
+    }
+
+    if (col === "Opening date" || col === "Deadline") {
+      const date = parseDateValue(rawValue);
+      if (date) dateValues.push(date);
+    }
+  }
+
+  const optionEntries = Array.from(optionMap.entries()).sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true }));
+  const options = optionEntries.map(([, label]) => label);
+  const optionKeys = optionEntries.map(([key]) => key);
+  const optionLabelByKey = Object.fromEntries(optionEntries);
+  if (col === STATUS_COLUMN) {
+    for (const [key, label] of [["open", "Open"], ["forthcoming", "Forthcoming"], ["closed", "Closed"]]) {
+      if (!optionLabelByKey[key]) optionLabelByKey[key] = label;
+    }
+  }
+  dateValues.sort();
+  const meta = {
+    hasNA,
+    options,
+    optionKeys,
+    optionLabelByKey,
+    min: numericValues.length ? Math.min(...numericValues) : null,
+    max: numericValues.length ? Math.max(...numericValues) : null,
+    dateMin: dateValues.length ? dateValues[0] : null,
+    dateMax: dateValues.length ? dateValues[dateValues.length - 1] : null,
+  };
+
+  if (useCache) state.filterMetadata[col] = meta;
+  return meta;
+}
+
+function scheduleFilterOptionsRefresh(openColumn = state.openMultiselectColumn) {
+  if (!refs.filtersGrid || !state.filtersOpen) return;
+  state.openMultiselectColumn = openColumn || null;
+  if (filterOptionsRefreshTimerId) clearTimeout(filterOptionsRefreshTimerId);
+  filterOptionsRefreshTimerId = setTimeout(() => {
+    filterOptionsRefreshTimerId = null;
+    renderFiltersPanel();
+  }, 0);
+}
+
+function hasActiveColumnFilters(filters = state.appliedColumnFilters) {
+  return COLUMN_ORDER.some((col) => {
+    const filter = filters[col];
+    if (!filter || filter.kind === "none") return false;
+    if (filter.kind === "text") return Boolean(String(filter.value || "").trim());
+    if (filter.kind === "select") {
+      return !isDefaultSelectFilter(col, filter) || Boolean(filter.includeNA);
+    }
+    if (filter.kind === "date") return Boolean(filter.value) || Boolean(filter.includeNA);
+    if (filter.kind === "range") {
+      const meta = getColumnMetadata(col);
+      if (meta.min === null && meta.max === null) return Boolean(filter.includeNA);
+      return Boolean(filter.includeNA)
+        || (filter.min !== null && filter.min !== meta.min)
+        || (filter.max !== null && filter.max !== meta.max);
+    }
+    return false;
+  });
+}
+
+function rowMatchesColumnFilter(row, col, filters = state.appliedColumnFilters) {
+  const filter = filters[col];
+  if (!filter || filter.kind === "none") return true;
+
+  const rawValue = getColumnDisplayValue(row, col);
+  const normalizedValue = normalizeFilterValue(rawValue);
+  const isNA = rawValue === "N/A";
+
+  if (filter.kind === "text") {
+    const expected = normalizeFilterValue(filter.value);
+    return !expected || normalizedValue.includes(expected);
+  }
+
+  if (filter.kind === "select") {
+    const values = getSelectFilterValues(filter, col);
+    if (!values.length && !filter.includeNA) return true;
+    if (isNA) return Boolean(filter.includeNA) || values.includes("__na__");
+    const rowTokens = getSelectTokensForValue(rawValue);
+    return values.some((value) => rowTokens.has(value));
+  }
+
+  if (filter.kind === "date") {
+    if (isNA) return Boolean(filter.includeNA);
+    if (!filter.value) return true;
+    const rowDate = parseDateValue(rawValue);
+    return Boolean(rowDate) && rowDate === filter.value;
+  }
+
+  if (filter.kind === "range") {
+    const meta = getColumnMetadata(col);
+    if (meta.min === null && meta.max === null) {
+      return isNA ? Boolean(filter.includeNA) : true;
+    }
+
+    if (isNA) return Boolean(filter.includeNA);
+    const numeric = parseBudgetValue(rawValue);
+    if (numeric === null) return false;
+    if (filter.min !== null && numeric < filter.min) return false;
+    if (filter.max !== null && numeric > filter.max) return false;
+    return true;
+  }
+
+  return true;
+}
+
+function getFilteredRows() {
+  const sourceRows = (state.showSelectedOnly ? getSelectedRows() : state.allRows).filter((row) => rowMatchesCompany(row));
+  const query = normalizeFilterValue(refs.searchInput.value);
+  const activeFilters = state.appliedColumnFilters || state.columnFilters;
+  const hasColumnFilters = hasActiveColumnFilters(activeFilters);
+
+  if (!query && !hasColumnFilters) return sourceRows;
+
+  let rows = sourceRows;
+
+  if (query) {
+    rows = rows.filter((row) =>
+      COLUMN_ORDER.some((col) => {
+        const value = getColumnDisplayValue(row, col);
+        return normalizeFilterValue(value).includes(query);
+      }),
+    );
+  }
+
+  if (hasColumnFilters) {
+    rows = rows.filter((row) => COLUMN_ORDER.every((col) => rowMatchesColumnFilter(row, col, activeFilters)));
+  }
+
+  return rows;
+}
+
+function updatePager() {
+  state.totalPages = Math.max(1, Math.ceil(Math.max(state.filteredRows.length, 1) / state.pageSize));
+  if (state.page > state.totalPages) state.page = state.totalPages;
+  const pageLabel = state.showSelectedOnly
+    ? t("selectedModeStatus", { count: state.selectedRows.size })
+    : t("pageText", { page: state.page, total: state.totalPages });
+  refs.pageInfo.textContent = pageLabel;
+  if (refs.pageInfoBottom) refs.pageInfoBottom.textContent = pageLabel;
+
+  const disablePager = state.showSelectedOnly;
+  refs.prevPageBtn.disabled = disablePager || state.page <= 1;
+  refs.nextPageBtn.disabled = disablePager || state.page >= state.totalPages;
+  if (refs.prevPageBtnBottom) refs.prevPageBtnBottom.disabled = disablePager || state.page <= 1;
+  if (refs.nextPageBtnBottom) refs.nextPageBtnBottom.disabled = disablePager || state.page >= state.totalPages;
+}
+
+function updateSelectAllCheckbox() {
+  const selectAll = refs.tableHeadRow.querySelector(".select-head .row-select");
+  if (!selectAll) return;
+
+  const visible = state.filteredRows;
+  if (!visible.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+
+  const selectedCount = visible.reduce((acc, row) => acc + (isRowSelected(row) ? 1 : 0), 0);
+  selectAll.checked = selectedCount === visible.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < visible.length;
+}
+
+function appendCardField(card, label, value, isLink = false) {
+  const line = document.createElement("p");
+  line.className = "card-field";
+
+  const strong = document.createElement("strong");
+  strong.textContent = `${label}: `;
+  line.appendChild(strong);
+
+  if (isLink && value && value !== "N/A") {
+    const a = document.createElement("a");
+    a.href = value;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.className = "call-link";
+    a.textContent = t("openLink");
+    line.appendChild(a);
+  } else {
+    const span = document.createElement("span");
+    span.textContent = sanitize(value);
+    line.appendChild(span);
+  }
+
+  card.appendChild(line);
+}
+
+function appendCardBudgetField(card, row) {
+  const line = document.createElement("p");
+  line.className = "card-field card-field-budget";
+
+  const strong = document.createElement("strong");
+  strong.textContent = "Budget 2026: ";
+  line.appendChild(strong);
+
+  const value = document.createElement("span");
+  value.textContent = sanitize(row[BUDGET_COLUMN]);
+  line.appendChild(value);
+
+  if (hasBudgetWarning(row)) {
+    const warning = document.createElement("span");
+    warning.className = "budget-warning-badge";
+    warning.textContent = "!";
+    warning.title = getBudgetWarningText(row);
+    warning.setAttribute("aria-label", t("budgetWarningLabel"));
+    line.appendChild(warning);
+
+    const help = document.createElement("small");
+    help.className = "budget-help";
+    help.textContent = getBudgetWarningText(row);
+    line.appendChild(help);
+  }
+
+  card.appendChild(line);
+}
+
+function renderCards(pageRows) {
+  if (!refs.cardList) return;
+  refs.cardList.innerHTML = "";
+
+  const fragment = document.createDocumentFragment();
+
+  for (const row of pageRows) {
+    const card = document.createElement("article");
+    card.className = "call-card";
+    if (isForthcomingRow(row)) card.classList.add("is-forthcoming");
+    if (isRowSelected(row)) card.classList.add("is-selected");
+
+    card.appendChild(createCardSelection(row));
+    card.appendChild(createCardInterest(row));
+
+    const title = document.createElement("h3");
+    title.className = "card-title";
+    title.textContent = sanitize(row["Topic title"]);
+    card.appendChild(title);
+
+    appendCardField(card, t("modalTopicCode"), row["Topic code"]);
+    appendCardField(card, "Programme", row["Programme"]);
+    appendCardField(card, t("modalDeadline"), row["Deadline"]);
+    appendCardBudgetField(card, row);
+
+    const descriptionWrap = document.createElement("div");
+    descriptionWrap.className = "card-description";
+
+    const description = document.createElement("p");
+    description.textContent = getDescriptionPreview(row);
+    descriptionWrap.appendChild(description);
+
+    if (hasExpandedDescription(row)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "desc-more-btn";
+      button.textContent = t("readMore");
+      button.addEventListener("click", () => openDescriptionModal(row));
+      descriptionWrap.appendChild(button);
+    }
+
+    card.appendChild(descriptionWrap);
+    appendCardField(card, t("modalCallLink"), row["CAll link"], true);
+
+    fragment.appendChild(card);
+  }
+
+  refs.cardList.appendChild(fragment);
+}
+
+function renderRows() {
+  const rows = getFilteredRows();
+
+  state.filteredRows = rows;
+  updatePager();
+  const start = state.showSelectedOnly ? 0 : (state.page - 1) * state.pageSize;
+  const end = state.showSelectedOnly ? rows.length : start + state.pageSize;
+  const pageRows = rows.slice(start, end);
+
+  refs.tableBody.innerHTML = "";
+  if (refs.cardList) refs.cardList.innerHTML = "";
+
+  if (rows.length === 0) {
+    refs.statusText.textContent = t("statusEmpty");
+    updateSelectAllCheckbox();
+    updateSelectionControls();
+    return;
+  }
+
+  if (state.showSelectedOnly) {
+    refs.statusText.textContent = `${t("selectedModeStatus", { count: state.selectedRows.size })} ${t("pageRowsText", { count: rows.length })}`;
+  } else {
+    refs.statusText.textContent = `${t("statusLoaded", { count: state.totalRows })} ${t("pageRowsText", { count: rows.length })}`;
+  }
+
+  const fragment = document.createDocumentFragment();
+
+  for (const row of pageRows) {
+    const tr = document.createElement("tr");
+    if (isForthcomingRow(row)) tr.classList.add("is-forthcoming");
+    if (isRowSelected(row)) tr.classList.add("is-selected");
+
+    const tdSelect = document.createElement("td");
+    tdSelect.className = "select-cell";
+    tdSelect.appendChild(createRowSelectionCheckbox(row));
+    tr.appendChild(tdSelect);
+
+    for (const col of COLUMN_ORDER) {
+      const td = document.createElement("td");
+      if (col === INTEREST_COLUMN) {
+        td.appendChild(createInterestSelect(row));
+      } else if (col === "CAll link" && row[col] && row[col] !== "N/A") {
+        const a = document.createElement("a");
+        a.href = row[col];
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.className = "call-link";
+        a.textContent = t("openLink");
+        td.appendChild(a);
+      } else if (col === TOPIC_TITLE_COLUMN) {
+        td.appendChild(createTopicTitleCell(row));
+      } else if (col === DESCRIPTION_COLUMN) {
+        td.appendChild(createDescriptionCell(row));
+      } else if (col === BUDGET_COLUMN) {
+        td.appendChild(createBudgetCell(row));
+      } else {
+        td.textContent = sanitize(row[col]);
+      }
+      tr.appendChild(td);
+    }
+
+    fragment.appendChild(tr);
+  }
+
+  refs.tableBody.appendChild(fragment);
+  renderCards(pageRows);
+  updateSelectAllCheckbox();
+  updateSelectionControls();
+}
+
+function applyLanguage() {
+  ensureColumnFilters();
+  state.filterMetadata = Object.create(null);
+
+  refs.title.textContent = t("title");
+  refs.labelPeriod.textContent = t("period");
+  refs.labelLanguage.textContent = t("language");
+  if (refs.navCallsBtn) refs.navCallsBtn.textContent = t("navCalls");
+  if (refs.navCompaniesBtn) refs.navCompaniesBtn.textContent = t("navCompanies");
+  refs.searchInput.placeholder = t("searchPlaceholder");
+  refs.refreshBtn.textContent = t("refresh");
+  updateRefreshButtonCooldownState();
+  refs.exportCsvBtn.textContent = t("exportCsv");
+  refs.exportXlsxBtn.textContent = t("exportXlsx");
+  refs.prevPageBtn.textContent = t("prev");
+  refs.nextPageBtn.textContent = t("next");
+  if (refs.prevPageBtnBottom) refs.prevPageBtnBottom.textContent = t("prev");
+  if (refs.nextPageBtnBottom) refs.nextPageBtnBottom.textContent = t("next");
+
+  if (refs.themeToggleBtn) {
+    const label = state.theme === "dark" ? t("themeSwitchToLight") : t("themeSwitchToDark");
+    refs.themeToggleBtn.setAttribute("aria-label", label);
+    refs.themeToggleBtn.setAttribute("title", label);
+  }
+
+  if (refs.modalHeading) refs.modalHeading.textContent = t("modalTitle");
+  if (refs.modalCloseBtn) refs.modalCloseBtn.textContent = t("modalClose");
+  if (refs.modalTopicCodeLabel) refs.modalTopicCodeLabel.textContent = t("modalTopicCode");
+  if (refs.modalTopicTitleLabel) refs.modalTopicTitleLabel.textContent = t("modalTopicTitle");
+  if (refs.modalDeadlineLabel) refs.modalDeadlineLabel.textContent = t("modalDeadline");
+  if (refs.modalCallLinkLabel) refs.modalCallLinkLabel.textContent = t("modalCallLink");
+  if (refs.modalDescriptionLabel) refs.modalDescriptionLabel.textContent = t("modalDescription");
+  if (refs.modalLinkValue) refs.modalLinkValue.textContent = t("openLink");
+
+  refs.tableHeadRow.innerHTML = "";
+
+  const selectHead = document.createElement("th");
+  selectHead.className = "select-head";
+  const selectAll = document.createElement("input");
+  selectAll.type = "checkbox";
+  selectAll.className = "row-select";
+  selectAll.setAttribute("aria-label", "Select visible rows");
+  selectAll.checked = state.filteredRows.length > 0 && state.filteredRows.every((row) => isRowSelected(row));
+  selectAll.addEventListener("change", () => {
+    for (const row of state.filteredRows) {
+      setRowSelected(row, selectAll.checked);
+    }
+    updateSelectionControls();
+    renderRows();
+  });
+  selectHead.appendChild(selectAll);
+  refs.tableHeadRow.appendChild(selectHead);
+
+  for (const col of COLUMN_ORDER) {
+    const th = document.createElement("th");
+
+    const label = document.createElement("span");
+    label.className = "column-heading-label";
+    label.textContent = getColumnLabel(col);
+    th.appendChild(label);
+
+    refs.tableHeadRow.appendChild(th);
+  }
+
+  if (refs.applyFiltersBtn) refs.applyFiltersBtn.textContent = t("filterApply");
+  if (refs.clearFiltersBtn) refs.clearFiltersBtn.textContent = t("clearFilters");
+  const filterTitle = document.querySelector(".filters-panel-title");
+  if (filterTitle) filterTitle.textContent = t("filtersTitle");
+  renderFiltersPanel();
+  renderCompanies();
+  updateSelectionControls();
+  renderRows();
+}
+
+function countActiveColumnFilters(filters = state.appliedColumnFilters) {
+  return COLUMN_ORDER.reduce((acc, col) => {
+    const filter = filters[col];
+    if (!filter || filter.kind === "none") return acc;
+    if (filter.kind === "text") return acc + (String(filter.value || "").trim() ? 1 : 0);
+    if (filter.kind === "select") {
+      const active = !isDefaultSelectFilter(col, filter) || Boolean(filter.includeNA);
+      return acc + (active ? 1 : 0);
+    }
+    if (filter.kind === "date") return acc + ((filter.value || filter.includeNA) ? 1 : 0);
+    if (filter.kind === "range") {
+      const meta = getColumnMetadata(col);
+      if (meta.min === null && meta.max === null) {
+        return acc + (filter.includeNA ? 1 : 0);
+      }
+      const active = Boolean(filter.includeNA)
+        || (filter.min !== null && filter.min !== meta.min)
+        || (filter.max !== null && filter.max !== meta.max);
+      return acc + (active ? 1 : 0);
+    }
+    return acc;
+  }, 0);
+}
+
+function clearAllColumnFilters() {
+  state.columnFilters = Object.fromEntries(COLUMN_ORDER.map((col) => [col, createDefaultFilterState(col)]));
+  state.appliedColumnFilters = cloneColumnFilters(state.columnFilters);
+  state.filtersDirty = false;
+  state.page = 1;
+  applyLanguage();
+}
+
+function updateFiltersPanelVisibility() {
+  if (!refs.filtersPanel || !refs.filtersToggleBtn) return;
+  refs.filtersPanel.hidden = !state.filtersOpen;
+  refs.filtersToggleBtn.setAttribute("aria-expanded", String(state.filtersOpen));
+  const count = countActiveColumnFilters(state.filtersOpen ? state.columnFilters : state.appliedColumnFilters);
+  const dirty = state.filtersDirty ? "*" : "";
+  const label = `${state.filtersOpen ? t("filtersHide") : t("filtersShow")}${count ? ` (${t("activeFilters", { count })})` : ""}${dirty}`;
+  refs.filtersToggleBtn.textContent = label;
+}
+
+function createColumnFilterControl(col) {
+  const filterState = state.columnFilters[col];
+  const meta = getColumnMetadata(col, getRowsForFilterOptions(col));
+  const card = document.createElement("section");
+  card.className = "filter-card";
+
+  const label = document.createElement("label");
+  label.className = "filter-card-label";
+  label.textContent = getColumnLabel(col);
+  card.appendChild(label);
+
+  const filterWrap = document.createElement("div");
+  filterWrap.className = "filter-control-wrap";
+
+  if (filterState.kind === "text") {
+    const input = document.createElement("input");
+    input.type = "search";
+    input.className = "column-filter-input";
+    input.placeholder = t("filterPlaceholder");
+    input.value = filterState.value || "";
+    input.spellcheck = false;
+    input.setAttribute("list", meta.options.length > 0 && meta.options.length <= 120 ? `list-${col}` : "");
+    input.addEventListener("input", () => {
+      state.columnFilters[col].value = input.value;
+      markFiltersDirty();
+    });
+    filterWrap.appendChild(input);
+
+    if (meta.options.length > 0 && meta.options.length <= 120) {
+      const datalist = document.createElement("datalist");
+      datalist.id = `list-${col}`;
+      for (const optionValue of meta.options) {
+        const option = document.createElement("option");
+        option.value = optionValue;
+        datalist.appendChild(option);
+      }
+      filterWrap.appendChild(datalist);
+    }
+  } else if (filterState.kind === "select") {
+    const currentValues = new Set(getSelectFilterValues(filterState, col));
+    const details = document.createElement("details");
+    details.className = "multiselect";
+
+    if (state.openMultiselectColumn === col) {
+      details.open = true;
+    }
+
+    details.addEventListener("toggle", () => {
+      if (details.open) {
+        state.openMultiselectColumn = col;
+        if (refs.filtersGrid) {
+          for (const other of refs.filtersGrid.querySelectorAll("details.multiselect[open]")) {
+            if (other !== details) other.open = false;
+          }
+        }
+      } else if (state.openMultiselectColumn === col) {
+        state.openMultiselectColumn = null;
+      }
+    });
+
+    const summary = document.createElement("summary");
+    summary.className = "multiselect-trigger";
+    const summaryLabel = document.createElement("span");
+    summaryLabel.className = "multiselect-summary";
+    const summaryCount = document.createElement("span");
+    summaryCount.className = "multiselect-count";
+    summary.append(summaryLabel, summaryCount);
+    details.appendChild(summary);
+
+    const panel = document.createElement("div");
+    panel.className = "multiselect-panel";
+
+    const actions = document.createElement("div");
+    actions.className = "multiselect-actions";
+    const btnSelectAll = document.createElement("button");
+    btnSelectAll.type = "button";
+    btnSelectAll.className = "multiselect-action";
+    btnSelectAll.textContent = t("filterSelectAll");
+    btnSelectAll.addEventListener("click", (event) => {
+      event.preventDefault();
+      state.columnFilters[col].values = [...(meta.optionKeys || meta.options.map(canonicalizeSelectValue))];
+      state.openMultiselectColumn = col;
+      markFiltersDirty();
+      renderFiltersPanel();
+    });
+    const btnClear = document.createElement("button");
+    btnClear.type = "button";
+    btnClear.className = "multiselect-action";
+    btnClear.textContent = t("filterReset");
+    btnClear.addEventListener("click", (event) => {
+      event.preventDefault();
+      state.columnFilters[col].values = getDefaultSelectValues(col);
+      state.columnFilters[col].includeNA = false;
+      state.openMultiselectColumn = col;
+      markFiltersDirty();
+      renderFiltersPanel();
+    });
+    actions.append(btnSelectAll, btnClear);
+    panel.appendChild(actions);
+
+    const optionsWrap = document.createElement("div");
+    optionsWrap.className = "multiselect-options";
+    const optionValues = [...meta.options];
+    const optionKeys = [...(meta.optionKeys || optionValues.map(canonicalizeSelectValue))];
+    if (!isDefaultSelectFilter(col, filterState)) {
+      for (const selectedKey of currentValues) {
+        if (!selectedKey || optionKeys.includes(selectedKey)) continue;
+        optionKeys.push(selectedKey);
+        optionValues.push(meta.optionLabelByKey?.[selectedKey] || selectedKey);
+      }
+    }
+
+    if (!optionValues.length && !meta.hasNA) {
+      const empty = document.createElement("p");
+      empty.className = "filter-card-empty";
+      empty.textContent = t("filterNoOptions");
+      optionsWrap.appendChild(empty);
+    }
+
+    for (const [index, optionValue] of optionValues.entries()) {
+      const optionKey = optionKeys[index] || canonicalizeSelectValue(optionValue);
+      const optionLabel = document.createElement("label");
+      optionLabel.className = "multiselect-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = currentValues.has(optionKey);
+      checkbox.addEventListener("change", () => {
+        const nextValues = new Set(getSelectFilterValues(state.columnFilters[col], col));
+        if (checkbox.checked) nextValues.add(optionKey);
+        else nextValues.delete(optionKey);
+        const normalizedNextValues = Array.from(nextValues);
+        state.columnFilters[col].values = normalizedNextValues.length ? normalizedNextValues : getDefaultSelectValues(col);
+        state.openMultiselectColumn = col;
+        markFiltersDirty();
+        scheduleFilterOptionsRefresh(col);
+      });
+      const textNode = document.createElement("span");
+      textNode.textContent = optionValue;
+      optionLabel.append(checkbox, textNode);
+      optionsWrap.appendChild(optionLabel);
+    }
+
+    if (meta.hasNA) {
+      const optionLabel = document.createElement("label");
+      optionLabel.className = "multiselect-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = Boolean(filterState.includeNA);
+      checkbox.addEventListener("change", () => {
+        state.columnFilters[col].includeNA = checkbox.checked;
+        state.openMultiselectColumn = col;
+        markFiltersDirty();
+        scheduleFilterOptionsRefresh(col);
+      });
+      const textNode = document.createElement("span");
+      textNode.textContent = "N/A";
+      optionLabel.append(checkbox, textNode);
+      optionsWrap.appendChild(optionLabel);
+    }
+
+    panel.appendChild(optionsWrap);
+    details.appendChild(panel);
+    filterWrap.appendChild(details);
+
+    function updateSummary() {
+      const values = getSelectFilterValues(state.columnFilters[col], col);
+      if (!values.length && !state.columnFilters[col].includeNA) {
+        summaryLabel.textContent = t("filterAny");
+        summaryCount.textContent = "";
+        return;
+      }
+      const labels = values.map((value) => meta.optionLabelByKey?.[value] || value);
+      if (labels.length <= 2) {
+        summaryLabel.textContent = labels.join(", ") || t("filterAny");
+      } else {
+        summaryLabel.textContent = t("filterSelectedCount", { count: labels.length });
+      }
+      summaryCount.textContent = state.columnFilters[col].includeNA ? " + N/A" : "";
+    }
+
+    updateSummary();
+  } else if (filterState.kind === "date") {
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "column-filter-input column-filter-date";
+    if (meta.dateMin) input.min = meta.dateMin;
+    if (meta.dateMax) input.max = meta.dateMax;
+    input.value = filterState.value || "";
+    input.addEventListener("input", () => {
+      state.columnFilters[col].value = input.value;
+      markFiltersDirty();
+    });
+    filterWrap.appendChild(input);
+    if (meta.hasNA) {
+      const labelNA = document.createElement("label");
+      labelNA.className = "filter-na-toggle";
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = Boolean(filterState.includeNA);
+      check.addEventListener("change", () => {
+        state.columnFilters[col].includeNA = check.checked;
+        markFiltersDirty();
+      });
+      labelNA.appendChild(check);
+      labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
+      filterWrap.appendChild(labelNA);
+    }
+  } else if (filterState.kind === "range") {
+    const minValue = meta.min ?? 0;
+    const maxValue = meta.max ?? 0;
+
+    if (meta.min === null || meta.max === null) {
+      const info = document.createElement("p");
+      info.className = "filter-card-empty";
+      info.textContent = t("filterNoNumeric");
+      filterWrap.appendChild(info);
+
+      if (meta.hasNA) {
+        const labelNA = document.createElement("label");
+        labelNA.className = "filter-na-toggle";
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = Boolean(filterState.includeNA);
+        check.addEventListener("change", () => {
+          state.columnFilters[col].includeNA = check.checked;
+          markFiltersDirty();
+          scheduleFilterOptionsRefresh(col);
+        });
+        labelNA.appendChild(check);
+        labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
+        filterWrap.appendChild(labelNA);
+      }
+
+      card.appendChild(filterWrap);
+      return card;
+    }
+
+    if (filterState.min === null || filterState.min < minValue || filterState.min > maxValue) {
+      filterState.min = minValue;
+    }
+    if (filterState.max === null || filterState.max < minValue || filterState.max > maxValue) {
+      filterState.max = maxValue;
+    }
+
+    const values = document.createElement("div");
+    values.className = "range-filter-values";
+    const minLabel = document.createElement("span");
+    minLabel.className = "range-pill";
+    const maxLabel = document.createElement("span");
+    maxLabel.className = "range-pill";
+    values.append(minLabel, maxLabel);
+    filterWrap.appendChild(values);
+
+    const rangeShell = document.createElement("div");
+    rangeShell.className = "dual-range";
+    const minRange = document.createElement("input");
+    minRange.type = "range";
+    minRange.className = "column-filter-range is-min";
+    minRange.min = String(minValue);
+    minRange.max = String(maxValue);
+    minRange.step = "1";
+    minRange.value = String(filterState.min ?? minValue);
+
+    const maxRange = document.createElement("input");
+    maxRange.type = "range";
+    maxRange.className = "column-filter-range is-max";
+    maxRange.min = String(minValue);
+    maxRange.max = String(maxValue);
+    maxRange.step = "1";
+    maxRange.value = String(filterState.max ?? maxValue);
+
+    const numberInputs = document.createElement("div");
+    numberInputs.className = "range-number-inputs";
+    const minNumber = document.createElement("input");
+    minNumber.type = "number";
+    minNumber.className = "column-filter-input range-number";
+    minNumber.min = String(minValue);
+    minNumber.max = String(maxValue);
+    const maxNumber = document.createElement("input");
+    maxNumber.type = "number";
+    maxNumber.className = "column-filter-input range-number";
+    maxNumber.min = String(minValue);
+    maxNumber.max = String(maxValue);
+
+    function syncRangeUI() {
+      const currentMin = Number(state.columnFilters[col].min ?? minValue);
+      const currentMax = Number(state.columnFilters[col].max ?? maxValue);
+      minRange.value = String(currentMin);
+      maxRange.value = String(currentMax);
+      minNumber.value = String(Math.round(currentMin));
+      maxNumber.value = String(Math.round(currentMax));
+      minLabel.textContent = `${t("rangeMin")}: ${Math.round(currentMin).toLocaleString()}`;
+      maxLabel.textContent = `${t("rangeMax")}: ${Math.round(currentMax).toLocaleString()}`;
+      const total = Math.max(1, maxValue - minValue);
+      const startPct = ((currentMin - minValue) / total) * 100;
+      const endPct = ((currentMax - minValue) / total) * 100;
+      rangeShell.style.setProperty("--range-start", `${startPct}%`);
+      rangeShell.style.setProperty("--range-end", `${endPct}%`);
+    }
+
+    function updateRange(nextMin, nextMax) {
+      const clampedMin = Math.max(minValue, Math.min(nextMin, maxValue));
+      const clampedMax = Math.max(minValue, Math.min(nextMax, maxValue));
+      state.columnFilters[col].min = Math.min(clampedMin, clampedMax);
+      state.columnFilters[col].max = Math.max(clampedMin, clampedMax);
+      syncRangeUI();
+      markFiltersDirty();
+    }
+
+    minRange.addEventListener("input", () => updateRange(Number(minRange.value), Number(maxRange.value)));
+    maxRange.addEventListener("input", () => updateRange(Number(minRange.value), Number(maxRange.value)));
+    minNumber.addEventListener("change", () => updateRange(Number(minNumber.value || minValue), Number(maxNumber.value || maxValue)));
+    maxNumber.addEventListener("change", () => updateRange(Number(minNumber.value || minValue), Number(maxNumber.value || maxValue)));
+
+    rangeShell.append(minRange, maxRange);
+    filterWrap.appendChild(rangeShell);
+
+    const minWrap = document.createElement("label");
+    minWrap.className = "range-number-wrap";
+    const minCaption = document.createElement("span");
+    minCaption.textContent = t("rangeMin");
+    minWrap.append(minCaption, minNumber);
+    const maxWrap = document.createElement("label");
+    maxWrap.className = "range-number-wrap";
+    const maxCaption = document.createElement("span");
+    maxCaption.textContent = t("rangeMax");
+    maxWrap.append(maxCaption, maxNumber);
+    numberInputs.append(minWrap, maxWrap);
+    filterWrap.appendChild(numberInputs);
+
+    syncRangeUI();
+
+    if (meta.hasNA) {
+      const labelNA = document.createElement("label");
+      labelNA.className = "filter-na-toggle";
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = Boolean(filterState.includeNA);
+      check.addEventListener("change", () => {
+        state.columnFilters[col].includeNA = check.checked;
+        markFiltersDirty();
+      });
+      labelNA.appendChild(check);
+      labelNA.appendChild(document.createTextNode(` ${t("filterIncludeNA")}`));
+      filterWrap.appendChild(labelNA);
+    }
+  } else {
+    const info = document.createElement("p");
+    info.className = "filter-card-empty";
+    info.textContent = "No filter";
+    filterWrap.appendChild(info);
+  }
+
+  card.appendChild(filterWrap);
+  return card;
+}
+
+function renderFiltersPanel() {
+  if (!refs.filtersGrid) return;
+  refs.filtersGrid.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  for (const col of COLUMN_ORDER) {
+    fragment.appendChild(createColumnFilterControl(col));
+  }
+  refs.filtersGrid.appendChild(fragment);
+  updateFiltersPanelVisibility();
+}
+
+function openDescriptionModal(row) {
+  if (!refs.descModal) return;
+
+  state.activeDescriptionRow = row;
+  if (refs.modalTopicCodeValue) refs.modalTopicCodeValue.textContent = sanitize(row["Topic code"]);
+  if (refs.modalTopicTitleValue) refs.modalTopicTitleValue.textContent = sanitize(row["Topic title"]);
+  if (refs.modalDeadlineValue) refs.modalDeadlineValue.textContent = sanitize(row["Deadline"]);
+  if (refs.modalDescriptionValue) refs.modalDescriptionValue.textContent = getFullDescription(row);
+
+  if (refs.modalLinkValue) {
+    const link = sanitize(row["CAll link"]);
+    if (link !== "N/A") {
+      refs.modalLinkValue.href = link;
+      refs.modalLinkValue.hidden = false;
+      refs.modalLinkValue.textContent = t("openLink");
+    } else {
+      refs.modalLinkValue.hidden = true;
+    }
+  }
+
+  if (typeof refs.descModal.showModal === "function") {
+    refs.descModal.showModal();
+  } else {
+    refs.descModal.setAttribute("open", "true");
+  }
+
+  const modalBody = refs.descModal.querySelector(".modal-body");
+  if (modalBody) modalBody.scrollTop = 0;
+}
+
+function closeDescriptionModal() {
+  if (!refs.descModal) return;
+  if (typeof refs.descModal.close === "function") {
+    refs.descModal.close();
+  } else {
+    refs.descModal.removeAttribute("open");
+  }
+  state.activeDescriptionRow = null;
+}
+
+function isModalOpen() {
+  if (!refs.descModal) return false;
+  return refs.descModal.hasAttribute("open");
+}
+
+function bindModalEvents() {
+  if (!refs.descModal) return;
+
+  if (refs.modalCloseBtn) {
+    refs.modalCloseBtn.addEventListener("click", closeDescriptionModal);
+  }
+
+  refs.descModal.addEventListener("click", (event) => {
+    if (event.target === refs.descModal) {
+      closeDescriptionModal();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isModalOpen()) {
+      closeDescriptionModal();
+    }
+  });
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function readJsonIfPossible(res, requireItems = true) {
+  const raw = await res.text();
+  const parsed = safeParseJSON(raw);
+  if (!parsed) return null;
+  if (requireItems && !Array.isArray(parsed.items)) return null;
+  return parsed;
+}
+
+function paginateClientPayload(payload, targetPage, pageSize) {
+  const allItems = Array.isArray(payload.items) ? payload.items : [];
+  const total = allItems.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(Math.max(targetPage, 1), totalPages);
+  const start = (safePage - 1) * pageSize;
+  const end = start + pageSize;
+
+  return {
+    ...payload,
+    total,
+    page: safePage,
+    pageSize,
+    totalPages,
+    items: allItems.slice(start, end),
+    limits: {
+      ...(payload.limits && typeof payload.limits === "object" ? payload.limits : {}),
+      pageSize,
+      totalPages,
+    },
+  };
+}
+
+function buildEndpointUrl(endpoint, targetPage, forceRefresh) {
+  if (endpoint !== "/api/calls") return endpoint;
+
+  const params = new URLSearchParams({
+    page: String(targetPage),
+    pageSize: String(state.pageSize || PAGE_SIZE),
+  });
+  const query = refs.searchInput.value.trim();
+  if (query) params.set("q", query);
+  if (forceRefresh) params.set("refresh", "1");
+  return `${endpoint}?${params.toString()}`;
+}
+
+async function fetchSnapshotManifest(forceRefresh = false) {
+  for (const endpoint of SNAPSHOT_MANIFEST_CANDIDATES) {
+    try {
+      const reqOptions = { headers: { Accept: "application/json" } };
+      if (forceRefresh) reqOptions.cache = "no-store";
+      const res = await fetchWithTimeout(endpoint, reqOptions);
+      if (!res.ok) continue;
+      const data = await readJsonIfPossible(res, false);
+      if (!data || !Array.isArray(data.parts)) continue;
+      return data;
+    } catch {
+      // try next manifest URL
+    }
+  }
+  return null;
+}
+
+function buildChunkUrl(partPath) {
+  const clean = String(partPath || "").replace(/^\/+/, "");
+  return `${(import.meta.env.BASE_URL || "/").replace(/\?$/, "/")}${clean}`;
+}
+
+async function fetchChunkPayloadsFromManifest(manifest, forceRefresh = false) {
+  const reqOptions = { headers: { Accept: "application/json" } };
+  if (forceRefresh) reqOptions.cache = "no-store";
+
+  const responses = await Promise.all(manifest.parts.map(async (part) => {
+    const partUrl = buildChunkUrl(part.path || part.file || part.url);
+    const res = await fetchWithTimeout(partUrl, reqOptions);
+    if (!res.ok) throw new Error(`Chunk request failed: ${partUrl}`);
+    const data = await readJsonIfPossible(res, false);
+    if (!data || !Array.isArray(data.items)) throw new Error(`Invalid chunk payload: ${partUrl}`);
+    return data.items;
+  }));
+
+  return {
+    generatedAt: manifest.generatedAt || "",
+    source: manifest.source || "snapshot-chunks",
+    total: Number(manifest.total || 0),
+    limits: manifest.limits || { pageSize: state.pageSize || PAGE_SIZE },
+    items: responses.flat(),
+  };
+}
+
+async function fetchSnapshotPayload(forceRefresh = false) {
+  const manifest = await fetchSnapshotManifest(forceRefresh);
+  if (manifest) {
+    try {
+      const payload = await fetchChunkPayloadsFromManifest(manifest, forceRefresh);
+      if (payload && Array.isArray(payload.items) && payload.items.length) {
+        return {
+          payload,
+          responseSource: manifest.source || "snapshot-chunks",
+        };
+      }
+    } catch {
+      // fall back to single snapshot
+    }
+  }
+
+  for (const endpoint of SNAPSHOT_URL_CANDIDATES) {
+    try {
+      const reqOptions = { headers: { Accept: "application/json" } };
+      if (forceRefresh) reqOptions.cache = "no-store";
+      const res = await fetchWithTimeout(endpoint, reqOptions);
+      if (!res.ok) continue;
+      const data = await readJsonIfPossible(res);
+      if (!data || !Array.isArray(data.items)) continue;
+      return {
+        payload: data,
+        responseSource: res.headers.get("x-data-source") || endpoint,
+      };
+    } catch {
+      // try next snapshot URL
+    }
+  }
+  return null;
+}
+
+async function fetchAllApiRows(forceRefresh = false) {
+  const buildLivePageUrl = (page) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(EXPORT_FETCH_PAGE_SIZE),
+    });
+    if (forceRefresh) params.set("refresh", "1");
+    return "/api/calls?" + params.toString();
+  };
+
+  const firstRes = await fetchWithTimeout(buildLivePageUrl(1), {
+    headers: { Accept: "application/json" },
+    cache: forceRefresh ? "no-store" : "default",
+  });
+  if (!firstRes.ok) return null;
+
+  const firstData = await readJsonIfPossible(firstRes);
+  if (!firstData || !Array.isArray(firstData.items)) return null;
+
+  const items = [...firstData.items];
+  const totalPages = Math.max(1, Number(firstData.limits?.apiReportedPages || firstData.apiReportedPages || firstData.totalPages || 1));
+  const cappedPages = Math.min(totalPages, 200);
+
+  for (let page = 2; page <= cappedPages; page += 1) {
+    if (refs.statusText) refs.statusText.textContent = `${t("statusLoading")} ${page}/${cappedPages}`;
+    const pageRes = await fetchWithTimeout(buildLivePageUrl(page), {
+      headers: { Accept: "application/json" },
+      cache: forceRefresh ? "no-store" : "default",
+    });
+    if (!pageRes.ok) break;
+
+    const pageData = await readJsonIfPossible(pageRes);
+    if (!pageData || !Array.isArray(pageData.items)) break;
+    items.push(...pageData.items);
+  }
+
+  const dedupedItems = dedupeRows(items);
+
+  return {
+    ...firstData,
+    source: firstData.source || "EU Funding & Tenders Search API (paged live)",
+    page: 1,
+    total: dedupedItems.length,
+    totalPages: Math.max(1, Math.ceil(dedupedItems.length / (state.pageSize || PAGE_SIZE))),
+    items: dedupedItems,
+  };
+}
+function getStoredTimestamp(key) {
+  const value = Number(storageGet(key) || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getRemainingCooldownMs(key, cooldownMs) {
+  const lastRunAt = getStoredTimestamp(key);
+  return Math.max(0, cooldownMs - (Date.now() - lastRunAt));
+}
+
+function updateRefreshButtonCooldownState() {
+  if (!refs.refreshBtn) return;
+
+  const remainingMs = getRemainingCooldownMs(MANUAL_REFRESH_LAST_KEY, MANUAL_REFRESH_COOLDOWN_MS);
+  if (remainingMs <= 0) {
+    refs.refreshBtn.disabled = false;
+    refs.refreshBtn.textContent = t("refresh");
+    if (refreshCooldownTimerId) {
+      clearTimeout(refreshCooldownTimerId);
+      refreshCooldownTimerId = null;
+    }
+    return;
+  }
+
+  const seconds = Math.ceil(remainingMs / 1000);
+  refs.refreshBtn.disabled = true;
+  refs.refreshBtn.textContent = t("refreshCooldown", { seconds });
+
+  if (refreshCooldownTimerId) clearTimeout(refreshCooldownTimerId);
+  refreshCooldownTimerId = setTimeout(updateRefreshButtonCooldownState, Math.min(1000, remainingMs));
+}
+
+async function triggerPersistentSnapshotRefresh() {
+  return true;
+}
+
+async function handleRefreshClick() {
+  if (getRemainingCooldownMs(MANUAL_REFRESH_LAST_KEY, MANUAL_REFRESH_COOLDOWN_MS) > 0) {
+    updateRefreshButtonCooldownState();
+    return;
+  }
+
+  storageSet(MANUAL_REFRESH_LAST_KEY, String(Date.now()));
+  updateRefreshButtonCooldownState();
+
+  try {
+    await loadSnapshot(true, state.page, { preservePosition: true });
+    refs.statusText.textContent = t("refreshSnapshotStarted");
+  } finally {
+    updateRefreshButtonCooldownState();
+  }
+}
+
+async function loadSnapshot(forceRefresh = false, targetPage = state.page || 1, options = {}) {
+  const preservePosition = options && options.preservePosition === true;
+  const scrollSnapshot = preservePosition ? captureScrollSnapshot() : null;
+  refs.statusText.textContent = t("statusLoading");
+
+  try {
+    let payload = null;
+    let responseSource = "";
+
+    const snapshotData = await fetchSnapshotPayload(forceRefresh);
+    if (snapshotData) {
+      payload = snapshotData.payload;
+      responseSource = snapshotData.responseSource;
+    }
+
+    if (!payload) {
+      const livePayload = await fetchAllApiRows(forceRefresh);
+      if (livePayload && Array.isArray(livePayload.items)) {
+        payload = livePayload;
+        responseSource = "EU Funding & Tenders Search API (paged live)";
+      }
+    }
+
+    if (!payload) {
+      throw new Error("No valid data source available");
+    }
+
+    applyPayload(payload, responseSource, targetPage);
+  } catch (error) {
+    const cachedPayload = loadLocalCache();
+    if (cachedPayload && Array.isArray(cachedPayload.items) && cachedPayload.items.length) {
+      applyPayload(cachedPayload, "local-cache", targetPage);
+      refs.statusText.textContent = `${t("statusError")} ${error.message}. Showing cached data.`;
+      return;
+    }
+
+    if (state.rows.length > 0) {
+      refs.statusText.textContent = `${t("statusError")} ${error.message}. Showing current data.`;
+      return;
+    }
+
+    refs.statusText.textContent = `${t("statusError")} ${error.message}`;
+  } finally {
+    if (scrollSnapshot) {
+      restoreScrollSnapshot(scrollSnapshot);
+    }
+  }
+}
+
+function setupAutoRefresh() {
+  if (autoRefreshTimerId) {
+    clearInterval(autoRefreshTimerId);
+  }
+
+  autoRefreshTimerId = window.setInterval(async () => {
+    if (document.visibilityState === "hidden") return;
+    if (autoRefreshInFlight) return;
+
+    autoRefreshInFlight = true;
+    try {
+      await loadSnapshot(true, state.page, { preservePosition: true });
+    } finally {
+      autoRefreshInFlight = false;
+    }
+  }, AUTO_REFRESH_INTERVAL_MS);
+}
+
+function csvEscape(value) {
+  const text = sanitize(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function getExportValue(row, col) {
+  if (col === DESCRIPTION_COLUMN) return getFullDescription(row);
+  if (col === INTEREST_COLUMN) return getInterestLabel(getRowInterestLevel(row));
+  return sanitize(row[col]);
+}
+
+async function fetchExportPage(page) {
+  const url = `/api/calls?page=${page}&pageSize=${EXPORT_FETCH_PAGE_SIZE}`;
+  const res = await fetchWithTimeout(url, {
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return readJsonIfPossible(res);
+}
+
+function dedupeRows(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const normalized = normalizeClientRow(row);
+    map.set(normalized._rowKey, normalized);
+  }
+  return Array.from(map.values());
+}
+
+async function fetchAllRowsForExport() {
+  const first = await fetchExportPage(1);
+  if (!first || !Array.isArray(first.items)) return null;
+
+  const collected = first.items.map(normalizeClientRow);
+  const totalPages = Math.max(1, Number(first.totalPages || 1));
+  const cappedPages = Math.min(totalPages, 200);
+
+  for (let page = 2; page <= cappedPages; page += 1) {
+    const next = await fetchExportPage(page);
+    if (!next || !Array.isArray(next.items) || !next.items.length) break;
+    for (const row of next.items) {
+      collected.push(normalizeClientRow(row));
+    }
+  }
+
+  return dedupeRows(collected);
+}
+
+async function getRowsForExport() {
+  if (state.selectedRows.size > 0) {
+    return dedupeRows(getSelectedRows());
+  }
+
+  const fromApi = await fetchAllRowsForExport();
+  if (fromApi && fromApi.length > 0) return fromApi;
+
+  const snapshotData = await fetchSnapshotPayload(true).catch(() => null);
+  if (snapshotData && snapshotData.payload && Array.isArray(snapshotData.payload.items)) {
+    return dedupeRows(snapshotData.payload.items);
+  }
+
+  return dedupeRows(state.filteredRows);
+}
+
+async function exportCsv() {
+  refs.statusText.textContent = t("statusLoading");
+  const rows = await getRowsForExport();
+  const lines = [COLUMN_ORDER.map(csvEscape).join(",")];
+
+  for (const row of rows) {
+    const line = COLUMN_ORDER.map((col) => csvEscape(getExportValue(row, col))).join(",");
+    lines.push(line);
+  }
+
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "eu_calls_2021_2027.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+  renderRows();
+}
+
+
+function getActiveCompany() {
+  if (state.currentView !== "companies") return null;
+  if (!state.activeCompanyId) return null;
+  return state.companies.find((company) => String(company.id) === String(state.activeCompanyId)) || null;
+}
+
+function getCompanyDomainKeys(company) {
+  return new Set((company?.domains || []).map(canonicalizeSelectValue).filter(Boolean));
+}
+
+function getAvailableDomainOptions() {
+  const rows = state.allRows.length ? state.allRows : state.rows;
+  const meta = getColumnMetadata("Domains", rows);
+  return meta.options.filter((domain) => domain && domain !== "N/A");
+}
+
+function getSelectedCompanyDomains() {
+  return Array.isArray(state.companyFormDomains) ? [...state.companyFormDomains] : [];
+}
+
+function rowMatchesCompany(row, company = getActiveCompany()) {
+  if (!company) return true;
+  const companyDomains = getCompanyDomainKeys(company);
+  if (!companyDomains.size) return false;
+  const rowDomains = getSelectTokensForValue(row.Domains);
+  for (const key of companyDomains) {
+    if (rowDomains.has(key)) return true;
+  }
+  return false;
+}
+
+function getCompanyRecommendedRows(company = getActiveCompany()) {
+  if (!company) return [];
+  const sourceRows = (state.showSelectedOnly ? getSelectedRows() : state.allRows).filter((row) => rowMatchesCompany(row));
+  return sourceRows.filter((row) => rowMatchesCompany(row, company));
+}
+
+function setCompanyFormMode(company = null) {
+  state.editingCompanyId = company ? String(company.id) : null;
+  state.companyFormDomains = Array.isArray(company?.domains) ? [...company.domains] : [];
+  state.companyDomainsPickerOpen = false;
+  if (refs.companyNameInput) refs.companyNameInput.value = company?.name || "";
+  if (refs.companyNotesInput) refs.companyNotesInput.value = company?.notes || "";
+  renderCompanyDomainOptions();
+  if (refs.saveCompanyBtn) refs.saveCompanyBtn.textContent = company ? t("companyUpdate") : t("companyCreate");
+  if (refs.resetCompanyFormBtn) refs.resetCompanyFormBtn.textContent = t("companyCancelEdit");
+}
+
+function renderCompanyDomainOptions() {
+  if (!refs.companyDomainsPicker) return;
+  const selectedDomains = getSelectedCompanyDomains();
+  const selectedKeys = new Set(selectedDomains.map(canonicalizeSelectValue));
+  const currentOptions = getAvailableDomainOptions();
+  const optionValues = [...currentOptions];
+
+  for (const selected of selectedDomains) {
+    const key = canonicalizeSelectValue(selected);
+    if (key && !optionValues.some((option) => canonicalizeSelectValue(option) === key)) {
+      optionValues.push(selected);
+    }
+  }
+
+  refs.companyDomainsPicker.innerHTML = "";
+  const details = document.createElement("details");
+  details.className = "company-domain-picker multiselect";
+  details.open = Boolean(state.companyDomainsPickerOpen);
+  details.addEventListener("toggle", () => {
+    state.companyDomainsPickerOpen = details.open;
+  });
+
+  const summary = document.createElement("summary");
+  summary.className = "multiselect-trigger company-domain-trigger";
+  const summaryLabel = document.createElement("span");
+  summaryLabel.className = "multiselect-summary";
+  summaryLabel.textContent = selectedDomains.length
+    ? selectedDomains.length <= 2
+      ? selectedDomains.join(", ")
+      : t("filterSelectedCount", { count: selectedDomains.length })
+    : t("filterAny");
+  const summaryCount = document.createElement("span");
+  summaryCount.className = "multiselect-count";
+  details.appendChild(summary);
+  summary.append(summaryLabel, summaryCount);
+
+  const panel = document.createElement("div");
+  panel.className = "multiselect-panel company-domain-panel";
+
+  const actions = document.createElement("div");
+  actions.className = "multiselect-actions";
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "multiselect-action";
+  clearBtn.textContent = t("filterReset");
+  clearBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    state.companyFormDomains = [];
+    state.companyDomainsPickerOpen = true;
+    renderCompanyDomainOptions();
+  });
+  actions.appendChild(clearBtn);
+  panel.appendChild(actions);
+
+  const optionsWrap = document.createElement("div");
+  optionsWrap.className = "multiselect-options company-domain-options";
+
+  if (!optionValues.length) {
+    const empty = document.createElement("p");
+    empty.className = "filter-card-empty";
+    empty.textContent = t("companyNoDomains");
+    optionsWrap.appendChild(empty);
+  } else {
+    for (const domain of optionValues) {
+      const domainKey = canonicalizeSelectValue(domain);
+      const optionLabel = document.createElement("label");
+      optionLabel.className = "multiselect-option";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = selectedKeys.has(domainKey);
+      checkbox.addEventListener("change", () => {
+        const next = new Map(getSelectedCompanyDomains().map((value) => [canonicalizeSelectValue(value), value]));
+        if (checkbox.checked) next.set(domainKey, domain);
+        else next.delete(domainKey);
+        state.companyFormDomains = Array.from(next.values());
+        state.companyDomainsPickerOpen = true;
+        renderCompanyDomainOptions();
+      });
+      const textNode = document.createElement("span");
+      textNode.textContent = domain;
+      optionLabel.append(checkbox, textNode);
+      optionsWrap.appendChild(optionLabel);
+    }
+  }
+
+  panel.appendChild(optionsWrap);
+  details.appendChild(panel);
+  refs.companyDomainsPicker.appendChild(details);
+}
+
+function updateActiveCompanyBanner() {
+  if (!refs.activeCompanyBanner) return;
+  const company = getActiveCompany();
+  refs.activeCompanyBanner.hidden = !company;
+  if (!company) return;
+  const rows = getCompanyRecommendedRows(company);
+  if (refs.activeCompanyName) refs.activeCompanyName.textContent = t("companyActive", { name: company.name });
+  if (refs.activeCompanyDomains) refs.activeCompanyDomains.textContent = (company.domains || []).join(" · ");
+  if (refs.activeCompanyCount) refs.activeCompanyCount.textContent = t("companyRecommendedCount", { count: rows.length });
+  if (refs.clearCompanyBtn) refs.clearCompanyBtn.textContent = t("companyClear");
+}
+
+function renderCompanies() {
+  if (refs.companiesTitle) refs.companiesTitle.textContent = t("companiesTitle");
+  if (refs.companyNameInput) refs.companyNameInput.placeholder = t("companyNamePlaceholder");
+  if (refs.companyNotesInput) refs.companyNotesInput.placeholder = t("companyNotesPlaceholder");
+  if (refs.saveCompanyBtn) refs.saveCompanyBtn.textContent = state.editingCompanyId ? t("companyUpdate") : t("companyCreate");
+  if (refs.resetCompanyFormBtn) refs.resetCompanyFormBtn.textContent = t("companyCancelEdit");
+  const domainLabel = document.getElementById("companyDomainsLabel");
+  if (domainLabel) domainLabel.textContent = t("companyDomainsLabel");
+
+  renderCompanyDomainOptions();
+
+  if (refs.companyList) {
+    refs.companyList.innerHTML = "";
+    if (!state.companies.length) {
+      const empty = document.createElement("p");
+      empty.className = "company-empty";
+      empty.textContent = t("companyNoCompanies");
+      refs.companyList.appendChild(empty);
+    } else {
+      const fragment = document.createDocumentFragment();
+      for (const company of state.companies) {
+        const card = document.createElement("article");
+        card.className = "company-card";
+        if (String(company.id) === String(state.activeCompanyId)) card.classList.add("is-active");
+
+        const body = document.createElement("div");
+        body.className = "company-card-body";
+        const title = document.createElement("h3");
+        title.textContent = company.name;
+        const domains = document.createElement("p");
+        domains.className = "company-domains";
+        domains.textContent = (company.domains || []).join(" · ") || "N/A";
+        body.append(title, domains);
+        if (company.notes) {
+          const notes = document.createElement("p");
+          notes.className = "company-notes";
+          notes.textContent = company.notes;
+          body.appendChild(notes);
+        }
+
+        const actions = document.createElement("div");
+        actions.className = "company-card-actions";
+        const enterBtn = document.createElement("button");
+        enterBtn.type = "button";
+        enterBtn.className = "btn btn-primary btn-small";
+        enterBtn.textContent = t("companyEnter");
+        enterBtn.addEventListener("click", () => selectCompany(company.id));
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "btn btn-secondary btn-small";
+        editBtn.textContent = t("companyEdit");
+        editBtn.addEventListener("click", () => setCompanyFormMode(company));
+        const deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "btn btn-secondary btn-small";
+        deleteBtn.textContent = t("companyDelete");
+        deleteBtn.addEventListener("click", () => deleteCompany(company.id));
+        actions.append(enterBtn, editBtn, deleteBtn);
+
+        card.append(body, actions);
+        fragment.appendChild(card);
+      }
+      refs.companyList.appendChild(fragment);
+    }
+  }
+
+  updateActiveCompanyBanner();
+}
+
+async function loadCompanies() {
+  try {
+    const res = await fetchWithTimeout(COMPANIES_ENDPOINT, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await readJsonIfPossible(res);
+    state.companies = Array.isArray(data?.items) ? data.items : [];
+    state.companiesLoaded = true;
+    if (state.activeCompanyId && !getActiveCompany()) state.activeCompanyId = null;
+    renderCompanies();
+    renderRows();
+  } catch {
+    state.companiesLoaded = false;
+    renderCompanies();
+    if (refs.statusText) refs.statusText.textContent = t("companyLoadFailed");
+  }
+}
+
+async function saveCompanyFromForm() {
+  const name = String(refs.companyNameInput?.value || "").trim();
+  const notes = String(refs.companyNotesInput?.value || "").trim();
+  const domains = getSelectedCompanyDomains();
+  if (!domains.length) {
+    if (refs.statusText) refs.statusText.textContent = t("companyRequiresDomain");
+    return;
+  }
+
+  const isEdit = Boolean(state.editingCompanyId);
+  try {
+    const res = await fetchWithTimeout(COMPANIES_ENDPOINT, {
+      method: isEdit ? "PUT" : "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({ id: state.editingCompanyId, name, domains, notes }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await readJsonIfPossible(res, false);
+    const saved = data?.item;
+    if (!saved) throw new Error("Missing saved company");
+
+    const existingIndex = state.companies.findIndex((company) => String(company.id) === String(saved.id));
+    if (existingIndex >= 0) state.companies[existingIndex] = saved;
+    else state.companies.push(saved);
+    state.companies.sort((a, b) => a.name.localeCompare(b.name));
+    if (isEdit && String(state.activeCompanyId) === String(saved.id)) state.activeCompanyId = saved.id;
+    setCompanyFormMode(null);
+    renderCompanies();
+    renderRows();
+  } catch {
+    if (refs.statusText) refs.statusText.textContent = t("companySaveFailed");
+  }
+}
+
+async function deleteCompany(id) {
+  try {
+    const res = await fetchWithTimeout(`${COMPANIES_ENDPOINT}?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    state.companies = state.companies.filter((company) => String(company.id) !== String(id));
+    if (String(state.activeCompanyId) === String(id)) state.activeCompanyId = null;
+    if (String(state.editingCompanyId) === String(id)) setCompanyFormMode(null);
+    renderCompanies();
+    renderRows();
+  } catch {
+    if (refs.statusText) refs.statusText.textContent = t("companyDeleteFailed");
+  }
+}
+
+function selectCompany(id) {
+  state.activeCompanyId = String(id);
+  if (state.currentView !== "companies") state.currentView = "companies";
+  state.page = 1;
+  state.filterMetadata = Object.create(null);
+  renderCompanies();
+  if (state.filtersOpen) renderFiltersPanel();
+  renderRows();
+}
+
+function clearActiveCompany() {
+  state.activeCompanyId = null;
+  state.page = 1;
+  state.filterMetadata = Object.create(null);
+  renderCompanies();
+  if (state.filtersOpen) renderFiltersPanel();
+  renderRows();
+}
+
+function loadXlsxLibrary() {
+  if (window.XLSX) return Promise.resolve();
+  if (xlsxLoadPromise) return xlsxLoadPromise;
+
+  xlsxLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("xlsx load failed"));
+    document.head.appendChild(script);
+  });
+
+  return xlsxLoadPromise;
+}
+
+async function exportXlsx() {
+  refs.statusText.textContent = t("statusLoading");
+  loadXlsxLibrary()
+    .then(async () => {
+      const rows = await getRowsForExport();
+      const data = rows.map((row) => {
+        const out = {};
+        for (const col of COLUMN_ORDER) {
+          out[col] = getExportValue(row, col);
+        }
+        return out;
+      });
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(data, { header: COLUMN_ORDER });
+      XLSX.utils.book_append_sheet(wb, ws, "Calls");
+      XLSX.writeFile(wb, "eu_calls_2021_2027.xlsx");
+      renderRows();
+    })
+    .catch(() => {
+      alert("Could not load Excel library.");
+      renderRows();
+    });
+}
+
+refs.langSelect.addEventListener("change", (event) => {
+  state.lang = event.target.value;
+  storageSet("eu-dashboard-lang", state.lang);
+  applyLanguage();
+});
+
+if (refs.navCallsBtn) {
+  refs.navCallsBtn.addEventListener("click", () => setCurrentView("calls"));
+}
+if (refs.navCompaniesBtn) {
+  refs.navCompaniesBtn.addEventListener("click", () => setCurrentView("companies"));
+}
+
+refs.searchInput.addEventListener("input", () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    state.page = 1;
+    state.filterMetadata = Object.create(null);
+    if (state.filtersOpen) renderFiltersPanel();
+    renderRows();
+  }, 180);
+});
+
+if (refs.filtersToggleBtn) {
+  refs.filtersToggleBtn.addEventListener("click", () => {
+    const nextOpen = !state.filtersOpen;
+    if (nextOpen) {
+      state.columnFilters = cloneColumnFilters(state.appliedColumnFilters);
+      state.filtersDirty = false;
+      renderFiltersPanel();
+    }
+    state.filtersOpen = nextOpen;
+    updateFiltersPanelVisibility();
+  });
+}
+if (refs.applyFiltersBtn) {
+  refs.applyFiltersBtn.addEventListener("click", applyDraftFilters);
+}
+if (refs.clearFiltersBtn) {
+  refs.clearFiltersBtn.addEventListener("click", clearAllColumnFilters);
+}
+refs.refreshBtn.addEventListener("click", handleRefreshClick);
+updateRefreshButtonCooldownState();
+if (refs.selectedOnlyBtn) {
+  refs.selectedOnlyBtn.addEventListener("click", toggleSelectedOnly);
+}
+if (refs.clearSelectedBtn) {
+  refs.clearSelectedBtn.addEventListener("click", clearSelectedRows);
+}
+refs.exportCsvBtn.addEventListener("click", exportCsv);
+refs.exportXlsxBtn.addEventListener("click", exportXlsx);
+if (refs.themeToggleBtn) {
+  refs.themeToggleBtn.addEventListener("click", toggleTheme);
+}
+if (refs.saveCompanyBtn) {
+  refs.saveCompanyBtn.addEventListener("click", saveCompanyFromForm);
+}
+if (refs.resetCompanyFormBtn) {
+  refs.resetCompanyFormBtn.addEventListener("click", () => setCompanyFormMode(null));
+}
+if (refs.clearCompanyBtn) {
+  refs.clearCompanyBtn.addEventListener("click", clearActiveCompany);
+}
+function goToLocalPage(nextPage) {
+  const safePage = Math.min(Math.max(Number(nextPage) || 1, 1), state.totalPages || 1);
+  if (safePage === state.page) return;
+
+  state.page = safePage;
+  renderRows();
+}
+
+refs.prevPageBtn.addEventListener("click", () => {
+  if (state.page <= 1) return;
+  goToLocalPage(state.page - 1);
+});
+refs.nextPageBtn.addEventListener("click", () => {
+  if (state.page >= state.totalPages) return;
+  goToLocalPage(state.page + 1);
+});
+if (refs.prevPageBtnBottom) {
+  refs.prevPageBtnBottom.addEventListener("click", () => {
+    if (state.page <= 1) return;
+    goToLocalPage(state.page - 1);
+  });
+}
+if (refs.nextPageBtnBottom) {
+  refs.nextPageBtnBottom.addEventListener("click", () => {
+    if (state.page >= state.totalPages) return;
+    goToLocalPage(state.page + 1);
+  });
+}
+
+(function init() {
+  ensureColumnFilters();
+  loadInterestCache();
+
+  applyTheme(resolveSavedTheme());
+
+  const savedLang = storageGet("eu-dashboard-lang");
+  if (savedLang && I18N[savedLang]) {
+    state.lang = savedLang;
+    refs.langSelect.value = savedLang;
+  }
+
+  applyLanguage();
+  bindModalEvents();
+  setupAutoRefresh();
+  setCurrentView("calls");
+  renderCompanies();
+  loadCompanies();
+
+  const localPayload = loadLocalCache();
+  if (localPayload && Array.isArray(localPayload.items)) {
+    applyPayload(localPayload, "local-cache", Number(localPayload.page || 1));
+  }
+
+  loadSnapshot(false, Number(localPayload?.page || 1));
+})();

@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: eu_calls_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: eu_calls
+      POSTGRES_USER: eu_calls
+      POSTGRES_PASSWORD: eu_calls_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - eu_calls_postgres_data:/var/lib/postgresql/data
+      - ./db/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eu_calls -d eu_calls"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  eu_calls_postgres_data:
